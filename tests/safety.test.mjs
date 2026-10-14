@@ -1,0 +1,4 @@
+import test from 'node:test'; import assert from 'node:assert/strict'; import fs from 'node:fs'; import path from 'node:path'; import {acquireLock,safeAssetPath,assertPublicSafe} from '../src/safety.mjs';
+const root=path.join(process.cwd(),'data/acceptance/phase2/implementation/safety');
+test('lock and paths',()=>{fs.rmSync(root,{recursive:true,force:true});fs.mkdirSync(root,{recursive:true});const a=acquireLock(root,'r1');assert.throws(()=>acquireLock(root,'r2'));a.release();assert.throws(()=>safeAssetPath(root,'../x','mp4'));assert.throws(()=>safeAssetPath(root,123,'mp4'));assert.match(safeAssetPath(root,'12345678901234567890','mp4'),/12345678901234567890\.mp4$/);});
+test('public safety',()=>{assert.doesNotThrow(()=>assertPublicSafe({title:'x',source_url:'https://buyin.jinritemai.com/p/1'}));assert.throws(()=>assertPublicSafe({cookie:'x'}));assert.throws(()=>assertPublicSafe({url:'https://x.test/?signature=TEST_TOKEN'}));});

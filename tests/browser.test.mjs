@@ -1,0 +1,4 @@
+import test from 'node:test'; import assert from 'node:assert/strict'; import path from 'node:path'; import {runBrowserRound} from '../src/browser/protocol.mjs';
+const fake=path.join(process.cwd(),'tests/fixtures/fake-ego.mjs');
+test('ego protocol fake space and observation',async()=>{const r=await runBrowserRound({run_id:'r1',action:'inspect',output_file:path.join(process.cwd(),'data/acceptance/phase2/implementation/evidence.json')},{command:fake,root:process.cwd(),timeoutMs:3000});assert.equal(r.status,'ok');assert.equal(r.type,'observation');assert.equal(typeof r.space_id,'string');});
+test('reject write action and timeout',async()=>{await assert.rejects(()=>runBrowserRound({run_id:'r1',action:'cart'},{command:fake,root:process.cwd(),timeoutMs:1000}),/ACTION_NOT_ALLOWED/);await assert.rejects(()=>runBrowserRound({run_id:'r1',action:'inspect',delay_ms:2000},{command:fake,root:process.cwd(),timeoutMs:20}),/TIMEOUT|may_have_late_effects/);});

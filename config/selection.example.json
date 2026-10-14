@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "policy_version": "season-surge-v1",
+  "confirmed": true,
+  "business_modes": ["affiliate", "self_store"],
+  "categories": {"include": [], "exclude": [], "optional": true, "confirmed": true},
+  "priorities": {
+    "seasonal": {"enabled": true, "mode": "prefer", "reference_date": null, "timezone": "Asia/Shanghai", "notes": ""},
+    "recent_surge": {"enabled": true, "mode": "prefer", "recent_days": 7, "baseline_days": 7, "minimum_growth_rate": null}
+  },
+  "focus_metrics": ["price", "commission_rate", "sales", "conversion_rate"],
+  "numeric_filters_enabled": false,
+  "rules": [],
+  "decisions": {"price_sku_basis": null, "sales_period": null, "conversion_scope": null, "conversion_denominator": null, "minimum_conversion_sample": null},
+  "allow_provisional_cart": true,
+  "limits": {"max_library_pages": 3, "max_candidates": 60, "max_cart_additions": 3, "browser_concurrency": 1, "download_concurrency": 2, "max_round_ms": 90000, "max_run_minutes": 30, "readback_attempts": 3},
+  "video_scope": {"page": 1, "sort": "site_default", "minimum_likes": null},
+  "feishu": {"identity": "user", "upload_main_images": true, "upload_videos": false},
+  "storage": {"video_root": "/Volumes/EXAMPLE_SHARED/selection"}
+}

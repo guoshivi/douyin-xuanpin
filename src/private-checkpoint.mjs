@@ -1,0 +1,5 @@
+import fs from 'node:fs/promises';
+import {noLinks} from './storage.mjs';
+import {failure,verifyReadback} from './verifier.mjs';
+export async function readCheckpoint(file,validate){await noLinks(file);let st;try{st=await fs.stat(file);}catch(e){if(e.code==='ENOENT')return null;throw e;}if(!st.isFile()||(st.mode&0o777)!==0o600||st.size>16*1024*1024)throw failure('PRIVATE_CHECKPOINT_INVALID');let value;try{value=JSON.parse(await fs.readFile(file,'utf8'),(_,v)=>v?.type==='Buffer'&&Array.isArray(v.data)?Buffer.from(v.data):v);}catch{throw failure('PRIVATE_CHECKPOINT_UNCERTAIN');}validate(value);return value;}
+export async function writeCheckpoint(file,value,ctx,validate){ctx.checkpoint();await noLinks(file);try{await fs.writeFile(file,JSON.stringify(value),{flag:'wx',mode:0o600});const h=await fs.open(file,fs.constants.O_RDWR|fs.constants.O_NOFOLLOW);try{await h.sync();}finally{await h.close();}}catch(e){if(e.code!=='EEXIST')throw e;}const actual=await readCheckpoint(file,validate);verifyReadback(value,actual);return actual;}

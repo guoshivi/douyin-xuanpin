@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="__CSRF_TOKEN__">
+  <meta name="color-scheme" content="light">
+  <title>选品工作台 · 设置与任务</title>
+  <link rel="stylesheet" href="/settings.css">
+</head>
+<body>
+  <a class="skip-link" href="#priority-title">跳到设置内容</a>
+  <div class="app-shell">
+    <main class="shell">
+      <header class="page-head">
+        <div><p class="breadcrumb">选品工作台 <span aria-hidden="true">/</span> 设置</p><h1>选品工作台</h1><p class="page-description">检查配置、执行选品、核对归档，在一个工作台完成。</p></div>
+        <div class="connection"><div id="connection-status" class="status" role="status">正在读取配置…</div><small id="requestDuration" aria-live="polite">最近请求响应：—</small></div>
+      </header>
+
+      <div class="quickstart" role="note">
+        <span class="qs-step"><b>1</b>检查设置</span><span class="qs-arrow" aria-hidden="true">→</span><span class="qs-step"><b>2</b>保存配置</span><span class="qs-arrow" aria-hidden="true">→</span><span class="qs-step"><b>3</b>开始选品</span>
+        <span class="qs-note">已有配置可直接从第 2 步开始；跑批时页面自动刷新，不用守着。</span>
+      </div>
+
+      <form id="settings-form" novalidate>
+        <div class="content-grid">
+          <div class="main-col">
+          <section class="panel task-panel" aria-labelledby="task-title">
+          <div class="section-head task-section-head"><h2 id="task-title">选品任务</h2><details class="task-policy"><summary>最多 3 商品 · 30 分钟 · 运行说明</summary><p>仅使用已保存配置。首版入车最多 3 商品、30 分钟；暂停与继续不改变本批日期、目录或期限。局域网页面与本机动作相同，任务在服务端 Mac 执行；关闭客户端页面不会终止任务。</p></details></div>
+          <p id="executionMode" class="muted" role="status">正在读取服务运行模式…</p>
+          <div class="task-hero">
+            <div class="task-hero-top"><span id="taskStateBadge" class="state-badge neutral">等待中</span><span class="task-live" aria-hidden="true">每 2 秒自动刷新</span></div>
+            <p id="taskStatus" class="task-status" role="status" aria-live="polite">尚未读取任务</p>
+            <p id="taskGuidance" class="task-guidance">正在读取任务状态…</p>
+          </div>
+          <div class="task-controls"><button type="button" id="startSelection" class="primary" disabled>开始选品</button><button type="button" id="pauseSelection" title="暂停后可继续本批" disabled>暂停（可恢复）</button><button type="button" id="resumeSelection" disabled>继续 / 核对</button><button type="button" id="cancelSelection" title="取消后不可恢复；已发生动作不会回滚" disabled>取消此批</button><button type="button" id="refreshSelection">刷新进度</button><label>历史批次 <select id="taskHistory" aria-label="历史选品批次"></select></label></div>
+          <p class="cancel-note">暂停可恢复 · 取消此批不可恢复</p>
+          <p id="startHint" class="hint-line"></p>
+          <p id="taskError" class="error" role="alert"></p><p id="taskErrorHelp" class="advice"></p>
+          <p id="taskCounts"></p>
+          <div class="task-inspect"><details class="legend"><summary>状态说明 / 卡住了怎么办</summary><ul><li><b>正在跑</b>：执行中，页面自动刷新，无需操作。</li><li><b>已完成</b>：本批跑完，待复核（不等于盈利结论）。</li><li><b>需处理</b>：登录 / 权限 / 浏览器控制权问题，处理后点「继续 / 核对」。</li><li><b>需核对 / 不确定</b>：有副作用残留（如加车结果不确定），人工核对后再决定，勿盲目重发。</li><li><b>受阻</b>：中途失败，按错误码建议处理。</li><li><b>已超期</b>：超过 30 分钟期限，只能只读对账。</li></ul></details><details class="budget-details"><summary>批次、预算与归档路径</summary><p id="taskBudget" class="muted"></p></details></div>
+        </section>
+          <div class="settings-content">
+            <section class="panel" aria-labelledby="priority-title">
+              <div class="section-head"><h2 id="priority-title" tabindex="-1"><span class="step-badge" aria-hidden="true">1</span>优先方向</h2><p>让系统更偏向「应季」和「近期起量」的商品；两个方向可同时开启。不勾选 = 不做优先，不影响其他规则。</p></div>
+              <div class="priority-options">
+                <label class="check"><span class="check-copy"><strong>优先应季商品</strong><small>结合参考日期与使用场景判断</small></span><input id="seasonalEnabled" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></label>
+                <label class="check"><span class="check-copy"><strong>优先近期起量商品</strong><small>比较相邻窗口的日均表现</small></span><input id="recentSurgeEnabled" type="checkbox" role="switch"><span class="switch-track" aria-hidden="true"></span></label>
+              </div>
+              <div class="two">
+                <div class="field"><label for="seasonalReferenceDate">参考日期 <span class="optional">可选</span></label><input id="seasonalReferenceDate" type="date"><small>留空 = 用本批北京时间日期；打算卖秋冬款可填应季日期</small><p class="error" data-error="seasonalReferenceDate"></p></div>
+                <div class="field"><label for="minimumGrowthRatePercent">起量最低增幅 <span class="optional">可选</span></label><div class="input-unit"><input id="minimumGrowthRatePercent" type="number" min="0" step="any" placeholder="不限"><span aria-hidden="true">%</span></div><small>留空不限制（可大于 100%）；例：填 30 = 要求近期日均比前一段高 30% 以上</small><p class="error" data-error="minimumGrowthRatePercent"></p></div>
+              </div>
+              <div class="field"><label for="seasonalNotes">季节 / 使用场景补充说明 <span class="optional">可选</span></label><textarea id="seasonalNotes" rows="2" placeholder="例如：秋冬室内运动、换季收纳；也可以留空"></textarea><p class="error" data-error="seasonalNotes"></p></div>
+              <div class="two window-fields"><div class="field"><label for="recentDays">近期观察天数</label><div class="input-unit"><input id="recentDays" type="number" min="1" step="1"><span aria-hidden="true">天</span></div><p class="error" data-error="recentDays"></p><small>常用：7 天</small></div><div class="field"><label for="baselineDays">前一段对比天数</label><div class="input-unit"><input id="baselineDays" type="number" min="1" step="1"><span aria-hidden="true">天</span></div><p class="error" data-error="baselineDays"></p><small>常用：7 天</small></div></div>
+            </section>
+
+            <section class="panel" aria-labelledby="category-title">
+              <div class="section-head"><h2 id="category-title"><span class="step-badge" aria-hidden="true">2</span>类目范围</h2><p>限定在哪些类目里选品：不选 = 不限范围。「包含」是白名单，「排除」是黑名单；需要时再添加。</p></div>
+              <div id="category-empty" class="empty" hidden><strong>类目选项未加载</strong><span>当前未加载新的可选类目；已有选择仍保留，失效项须核对后再保存。</span></div>
+              <div class="field"><label for="categorySearch">搜索类目</label><input id="categorySearch" type="search" placeholder="输入类目名称或编号"></div>
+              <div class="two category-fields"><div class="field"><label for="includeCategories">包含类目 <span class="optional">可多选</span></label><select id="includeCategories" multiple size="5" aria-describedby="include-help" class="cat-native"></select><div class="cat-picker" id="includePicker"><div class="cat-chips" id="includeChips"></div><div class="cat-list" id="includeList"></div></div><div class="field-footer"><small id="include-help">不选择表示不限类目；点条目即勾选，已选项在上方</small><button type="button" class="link-button" id="clearInclude">清空</button></div><p class="error" data-error="includeCategories"></p></div><div class="field"><label for="excludeCategories">排除类目 <span class="optional">可多选</span></label><select id="excludeCategories" multiple size="5" class="cat-native"></select><div class="cat-picker" id="excludePicker"><div class="cat-chips" id="excludeChips"></div><div class="cat-list" id="excludeList"></div></div><div class="field-footer"><small>不选择表示不排除；点条目即勾选，已选项在上方</small><button type="button" class="link-button" id="clearExclude">清空</button></div><p class="error" data-error="excludeCategories"></p></div></div>
+            </section>
+
+            <section class="panel" aria-labelledby="metric-title">
+              <div class="section-head"><h2 id="metric-title"><span class="step-badge" aria-hidden="true">3</span>可选业务条件</h2><p>硬门槛：数字留空 = 不限；填写 0 = 明确按 0 计算。不满足任一已填条件，商品不会入选。</p></div>
+              <div class="metric-group"><h3>价格</h3>
+                <p class="group-hint">例：只做 10–50 元的品 → 最低 10、最高 50、口径选「到手价」。</p>
+                <div class="two"><div class="field"><label for="priceMin">最低到手价（元）</label><input id="priceMin" type="number" min="0" step="any" placeholder="不限"><p class="error" data-error="priceMin"></p></div><div class="field"><label for="priceMax">最高到手价（元）</label><input id="priceMax" type="number" min="0" step="any" placeholder="不限"><p class="error" data-error="priceMax"></p></div></div>
+                <div class="field"><label for="priceBasis">价格口径</label><select id="priceBasis"><option value="">设置价格条件时选择</option><option value="displayed">平台当前展示</option><option value="take_home">到手价</option><option value="sku">主要销售款式</option></select><p class="error" data-error="priceBasis"></p></div>
+              </div>
+              <div class="metric-group"><h3>佣金</h3><p class="group-hint">例：填 20 = 佣金率不低于 20%；填 5 = 每单佣金不低于 5 元。</p><div class="two"><div class="field"><label for="commissionRatePercent">最低佣金率（%）</label><input id="commissionRatePercent" type="number" min="0" max="100" step="any" placeholder="不限"><p class="error" data-error="commissionRatePercent"></p></div><div class="field"><label for="commissionPerOrder">最低每单佣金（元）</label><input id="commissionPerOrder" type="number" min="0" step="any" placeholder="不限"><p class="error" data-error="commissionPerOrder"></p></div></div></div>
+              <div class="metric-group"><h3>销量</h3><p class="group-hint">例：填 100 = 至少卖出 100（按所选周期）。</p><div class="two"><div class="field"><label for="salesPeriod">销量周期 / 单位</label><select id="salesPeriod"><option value="">平台可见口径</option><option value="platform_current">平台当前口径</option><option value="snapshot">当前采集快照</option><option value="recent_7d">近 7 天</option><option value="recent_30d">近 30 天</option><option value="orders">订单数</option><option value="items">件数</option></select><p class="error" data-error="salesPeriod"></p></div><div class="field"><label for="salesMin">最低销量</label><input id="salesMin" type="number" min="0" step="any" placeholder="不限"><p class="error" data-error="salesMin"></p></div></div></div>
+              <div class="metric-group"><h3>转化</h3>
+                <p class="group-hint">新手建议留空：口径组合较多，容易误杀好商品。</p>
+                <div class="field"><label for="conversionScope">转化率口径</label><select id="conversionScope"><option value="">请选择</option><option value="product">商品级</option><option value="video">单视频级</option></select><p class="error" data-error="conversionScope"></p></div>
+                <div class="two"><div class="field"><label for="conversionDenominator">转化率分母</label><select id="conversionDenominator"><option value="">请选择</option><option value="paid_orders">支付订单</option><option value="orders">订单</option><option value="clicks">点击</option><option value="visitors">访客</option><option value="exposure">曝光</option></select><p class="error" data-error="conversionDenominator"></p></div><div class="field"><label for="conversionMinPercent">最低转化率（%）</label><input id="conversionMinPercent" type="number" min="0" max="100" step="any" placeholder="不限"><p class="error" data-error="conversionMinPercent"></p></div></div>
+                <div class="field"><label for="conversionMinSample">最低样本量</label><input id="conversionMinSample" type="number" min="0" step="1" placeholder="不限"><p class="error" data-error="conversionMinSample"></p></div>
+              </div>
+            </section>
+
+            <section class="panel" aria-labelledby="batch-title">
+              <div class="section-head"><h2 id="batch-title"><span class="step-badge" aria-hidden="true">4</span>缺数据与运行预算</h2><p>每批任务的硬边界，防止无限翻页、持续加车；推荐保持：入车 3、广场 3 页、候选 60。</p></div>
+              <div class="field"><label for="missingDataStrategy">缺数据处理</label><select id="missingDataStrategy"><option value="decision_page">进入决策页补查</option><option value="manual_review">待人工复核</option></select><p class="error" data-error="missingDataStrategy"></p><small>推荐「进入决策页补查」：更准，但每单多花一点时间。</small></div>
+              <div class="two"><div class="field"><label for="maxCartAdditions">本批最多入车商品数</label><input id="maxCartAdditions" type="number" min="1" step="1"><p class="error" data-error="maxCartAdditions"></p><small>建议 3：系统单批最多 3 个，达到就停。</small></div><div class="field"><label for="maxLibraryPages">广场最多页数</label><input id="maxLibraryPages" type="number" min="1" step="1"><p class="error" data-error="maxLibraryPages"></p><small>建议 3：翻页越多越慢。</small></div></div>
+              <div class="field"><label for="maxCandidates">最多候选数</label><input id="maxCandidates" type="number" min="1" step="1"><p class="error" data-error="maxCandidates"></p><small>建议 60：进入候选排序池的商品数。</small></div>
+            </section>
+
+            <section class="panel" aria-labelledby="storage-title">
+              <div class="section-head"><h2 id="storage-title"><span class="step-badge" aria-hidden="true">5</span>视频归档</h2><p>把选中商品的视频存到哪台机器：填服务端 Mac 或其已挂载 NAS 的绝对目录路径，不是手机 / Windows 客户端的磁盘。可手填；「选择文件夹」窗口在服务端 Mac 打开，需在那里完成选择。</p></div>
+              <div class="field"><label for="videoSaveRoot">视频保存目录</label><div class="directory-control"><input id="videoSaveRoot" type="text" spellcheck="false" placeholder="填写完整路径，或选择文件夹"><button type="button" id="chooseVideoDirectory">选择文件夹…</button></div><p class="error" data-error="videoSaveRoot"></p><small id="directoryStatus" role="status"></small><small>保存仅记录地址，不创建目录、不搬动已有视频。任务开始前再核验目录和写入权限。</small></div>
+              <div class="readonly"><strong>归档结构</strong><div class="archive-path"><span>所选目录</span><b aria-hidden="true">/</b><span>年月日</span><b aria-hidden="true">/</b><span>商品编号</span><b aria-hidden="true">/</b><span>视频</span></div><small>目录选择后仍需保存。修改只影响新任务，续跑沿用原目录。</small></div>
+            </section>
+          </div>
+          <aside class="summary-rail" aria-label="保存与配置摘要">
+            <section class="summary panel"><div class="summary-heading"><h2>保存前摘要</h2></div><p id="summaryText">尚未读取</p><p class="save-note">保存后会自动读回核对，确保写入成功。<br>只保存设置，不启动选品；要开跑，回到顶部点「开始选品」。</p></section>
+            <div class="rail-help"><strong>填写小提示</strong><p>类目和业务条件都可留空；观察天数与运行预算必须填正整数。不确定的项目保持默认即可。</p></div>
+            <div class="close-area"><button type="button" id="closeButton" class="danger">关闭设置面板</button><p>关闭标签页不会停止本机服务；「关闭设置面板」会停止服务（跑批中会中断），会先弹确认。备用方式：Ctrl+C。</p></div>
+          </aside>
+          <div class="save-dock" role="region" aria-label="保存操作"><p id="dirtyState" class="draft-state" aria-live="polite">未修改</p><footer class="actions"><button type="submit" class="primary">保存配置</button><button type="button" id="reloadButton">重新读取</button><button type="button" id="resetButton" class="quiet-button">重置未保存修改</button></footer><div id="form-error" class="error" role="alert"></div></div>
+          </div>
+          <div class="side-col">
+          <section class="panel results-panel" aria-labelledby="task-goods-title">
+          <div class="task-goods-head"><h3 id="task-goods-title">下载结果</h3><div class="task-goods-scope" role="group" aria-label="显示范围"><button type="button" id="scopeAll" class="scope-tab" aria-pressed="true">全部批次</button><button type="button" id="scopeBatch" class="scope-tab" aria-pressed="false">仅本批</button></div><p class="task-goods-note"><span id="taskGoodsCount" class="task-goods-count"></span>每页 5 品 · 明细区可滚动查看完整视频状态；素材路径保留在卡片底部。</p></div>
+          <ul id="taskResults" class="task-results"></ul>
+          <p id="taskGoodsEmpty" class="task-goods-empty">还没有成品。新批完成后，下载好的商品会列在这里（每个品都带链接）。</p>
+          <div id="resultsPageBar" class="results-page-bar" hidden><button type="button" id="resultsPrev" class="scope-tab">‹ 上一页</button><span id="resultsPageInfo" class="results-page-info">第 1 / 1 页</span><button type="button" id="resultsNext" class="scope-tab">下一页 ›</button></div>
+          </section>
+          </div>
+        </div>
+      </form>
+      <footer class="page-footer"><span>配置保存在服务端 Mac；局域网仅供同一获准子网的可信设备，没有账号登录或公网认证</span><span>历史素材不会移动或删除</span></footer>
+    </main>
+  </div>
+  <script type="module" src="/settings.mjs"></script>
+</body>
+</html>

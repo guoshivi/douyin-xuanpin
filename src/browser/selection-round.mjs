@@ -3,6 +3,7 @@ import {extractRows,libraryCandidates,extractDecision} from './extract.mjs';
 import {failure,verifyIdentity,verifyCart,assertNumericId,safeCode} from '../verifier.mjs';
 import {productLink} from '../product-links.mjs';
 import {noLinks} from '../storage.mjs';
+import {runExtensionDownloadRound,createEgoDownloadBridge} from './extension-download.mjs';
 // Wave18(A)：discover 期类目/标题排除（用户勾选：兑换券/虚拟＝本地生活服务整体；医疗健康/酒类/珠宝贵金属/文玩）。
 // 反例红线：实物「手写兑换券涂层贴」=居家日用 → 类目判别优先，标题只许极紧（禁用宽词：优惠券/团购/旅游/酒店/外卖/现货/裸「券」）。
 const CAT_IDS=['1000002143','1000004960','1000009091','1000000480','1000007740','1000001468'],CAT_NAMES=['本地生活服务','酒类','营养保健/特医食品','医疗器械及保健用品','黄金珠宝玉石','文玩收藏'],EXCLUDED_TITLE=/电子兑换[劵券]|电子提货卡|提货[劵券]|代金[劵券]/u;
@@ -29,8 +30,8 @@ export function extractDecisionTolerant({productId,title}){
  }
  if(hits.length!==1)return null;return {...hits[0],root_count:1,header_count:1};
 }
-export async function handleSelectionRound(req,{taskSpace=globalThis.taskSpace,emit=x=>process.stdout.write(JSON.stringify(x)+'\n')}={}){
- let task,space,ownedAdmissionPage,admissionScript,roundError,postEffectCheck;const createdThisRound=[];
+export async function handleSelectionRound(req,{taskSpace=globalThis.taskSpace,emit=x=>process.stdout.write(JSON.stringify(x)+'\n'),downloadBridge}={}){
+ let task,space,ownedAdmissionPage,ownedDownloadPage,admissionScript,roundError,postEffectCheck;const createdThisRound=[];
  // Wave7: the platform close() may still touch the certified producers before it returns
  // (late frames/requests during teardown). The post-effect publish permit is therefore
  // adjudicated on the close side as well: the teardown is initiated first, and the last
@@ -283,6 +284,38 @@ export async function handleSelectionRound(req,{taskSpace=globalThis.taskSpace,e
    if(!data.rows.length){if(total!==0||!data.empty_text)throw failure('COMPASS_EMPTY_NOT_PROVEN');result={context:null,videos:[],empty_verified:true,extraction,total_text:data.total_text};}else{const context=data.rows[0].context;
    if(context.product_id!==c.product_id||context.page_no!==1||!Number.isSafeInteger(context.page_size)||data.rows.length>context.page_size||typeof context.sort_field!=='string'||typeof context.is_asc!=='boolean'||typeof context.begin_date!=='string'||typeof context.end_date!=='string'||data.active_page&&data.active_page!=='1')throw failure('COMPASS_CONTEXT_INVALID');
    if(data.rows.length!==Math.min(total,context.page_size))throw failure('COMPASS_ROW_COUNT_MISMATCH');const seen=new Set();const videos=[];for(const row of data.rows){assertNumericId(row.aweme_id);if(JSON.stringify(row.context)!==JSON.stringify(context))throw failure('COMPASS_CONTEXT_MIXED');if(seen.has(row.aweme_id))throw failure('COMPASS_VIDEO_DUPLICATE');seen.add(row.aweme_id);const {context:_,extracted:__,...v}=row;videos.push({...v,commodity_id:c.commodity_id});}result={context,videos,extraction,total_text:data.total_text??null};}
+  }else if(req.operation==='download_video'){
+   const c=verifyIdentity(req.candidate);assertNumericId(req.video?.aweme_id);
+   if(req.video.commodity_id!==c.commodity_id||!req.video.download_intent)throw failure('DOWNLOAD_BINDING_EVIDENCE_REQUIRED');
+   let bridge=downloadBridge;
+   if(!bridge){
+    const compass=await get('compass');
+    const extensionId=req.extension_id;
+    if(typeof extensionId!=='string')throw failure('DOWNLOAD_EXTENSION_ID_REQUIRED');
+    ownedDownloadPage=await task.newPage();createdThisRound.push(ownedDownloadPage.label);
+    const storeFile=req.download_store_path;
+    if(typeof storeFile!=='string'||!storeFile)throw failure('DOWNLOAD_INTENT_STORE_REQUIRED');
+    const store={read:async key=>{try{const all=JSON.parse(await fs.readFile(storeFile,'utf8'));return all[key]??null;}catch{return null;}},write:async(key,value)=>{let all={};try{all=JSON.parse(await fs.readFile(storeFile,'utf8'));}catch{}all[key]=value;await fs.writeFile(storeFile,JSON.stringify(all),{encoding:'utf8',mode:0o600});}};
+    let compassContext;
+    const bindingExpression=({phase,video,candidate,selector})=>`(()=>{
+      const expected=${JSON.stringify({aweme_id:video.aweme_id,product_id:candidate.product_id,title:video.title})};
+      const recordOf=n=>{const k=Object.keys(n||{}).find(x=>x.startsWith('__reactFiber'));let f=k?n[k]:null;for(let i=0;f&&i<40;i++,f=f.return)if(f.memoizedProps?.record)return f.memoizedProps.record;return null};
+      const rows=[...document.querySelectorAll('tr')].map(tr=>({tr,record:recordOf(tr)})).filter(x=>String(x.record?.video_base_info?.video_id)===String(expected.aweme_id));
+      if(rows.length!==1)return {ok:false,reason:rows.length===0?'ROW_NOT_FOUND':'ROW_NOT_UNIQUE'};
+      const tr=rows[0].tr, buttons=[...tr.querySelectorAll(${JSON.stringify(selector)})];
+      if(buttons.length!==1)return {ok:false,reason:'BUTTON_NOT_UNIQUE'};
+      ${phase==='prepare'?`if(!globalThis.__w20SendMessage){const rt=globalThis.chrome?.runtime,original=rt?.sendMessage;if(typeof original!=='function')return {ok:false,reason:'RUNTIME_UNAVAILABLE'};const captures=[];const wrapped=function(...args){const last=typeof args.at(-1)==='function'?args.length-1:-1;const message=args[0];if(last>=0){const cb=args[last];args[last]=function(...response){captures.push({message,response:response[0]??null});return cb.apply(this,response)}}else captures.push({message,response:null});return original.apply(this,args)};try{Object.defineProperty(rt,'sendMessage',{value:wrapped,writable:true,configurable:true})}catch{return {ok:false,reason:'RUNTIME_NOT_WRITABLE'}};globalThis.__w20SendMessage={rt,original,captures}}`:''}
+      if(${JSON.stringify(phase)}==='prepare')return {ok:true,armed:true,aweme_id:expected.aweme_id,product_id:expected.product_id,title:expected.title};
+      const s=globalThis.__w20SendMessage;if(!s)return {ok:false,reason:'OBSERVER_NOT_ARMED'};try{Object.defineProperty(s.rt,'sendMessage',{value:s.original,writable:true,configurable:true})}catch{return {ok:false,reason:'RUNTIME_RESTORE_FAILED'}};
+      const messages=s.captures.filter(x=>x?.message&&typeof x.message==='object');const image=messages.map(x=>x.message).find(m=>m.type==='AUTO_CLIP_DOWNLOAD_IMAGE'&&m.payload?.url&&m.payload?.filename);const get=messages.map(x=>x.message).find(m=>m.type==='AUTO_CLIP_GET_DOUYIN_VID'&&m.payload?.videoId);if(!image)return {ok:false,reason:'DOWNLOAD_MESSAGE_NOT_OBSERVED'};if(get&&String(get.payload.videoId)!==String(expected.aweme_id))return {ok:false,reason:'REQUEST_AWEME_MISMATCH'};return {ok:true,binding:{download_id:null,url:image.payload.url,filename:image.payload.filename,video_id:expected.aweme_id,message_video_id:expected.aweme_id,commodity_id:${JSON.stringify(req.candidate.commodity_id)},context_product_id:expected.product_id,title:expected.title}};
+    })()`;
+    const readBinding=async ({phase,candidate,video,selector})=>{
+      if(!compassContext){await compass.cdp('Runtime.enable');const ev=await compass.events();const hit=(Array.isArray(ev)?ev:[]).find(x=>x?.method==='Runtime.executionContextCreated'&&x?.params?.context?.origin==='https://compass.jinritemai.com');compassContext=hit?.params?.context?.id;if(!Number.isInteger(compassContext))throw failure('DOWNLOAD_COMPASS_CONTEXT_UNAVAILABLE');}
+      const out=await compass.cdp('Runtime.evaluate',{expression:bindingExpression({phase,candidate,video,selector}),contextId:compassContext,awaitPromise:true,returnByValue:true});if(out?.exceptionDetails)throw failure('DOWNLOAD_BINDING_READER_FAILED');const value=out?.result?.value;if(!value?.ok)throw failure(value?.reason??'DOWNLOAD_BINDING_READER_FAILED');return value;
+    };
+    bridge=createEgoDownloadBridge({store,ownedPage:ownedDownloadPage,compassPage:compass,extensionId,download2Selector:'button[data-auto-clip-dl2-row-btn="1"]',download1Selector:'button[data-auto-clip-download-single-btn="1"]',readBinding,guard:()=>true});
+   }
+   result=await runExtensionDownloadRound({req,bridge});
   }else if(req.operation==='metadata'){
    assertNumericId(req.video.aweme_id);const p=await get('decision');const detailUrl=value=>{try{const u=new URL(value);return u.hostname==='www.douyin.com'&&u.pathname.includes('/aweme/detail/')&&u.searchParams.get('aweme_id')===req.video.aweme_id;}catch{return false;}};
    await p.cdp('Network.enable');await p.goto('https://www.douyin.com/video/'+req.video.aweme_id);

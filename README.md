@@ -9,7 +9,7 @@ Node.js ES Modules、SQLite 和 Ego 浏览器适配器组成的本地选品工�
 - `main`：生产 Wave19 + UIv8 的白名单源码快照。为去除个人机器路径，发布副本做了少量明确的路径去标识；否定测试中的 URL userinfo 换为明显的 TEST 占位符，少量不能仅凭格式确认的测试 ID 换成同长度重复数字示例，一条否定测试 token 换为 TEST_TOKEN。原生产目录不改。
 - `wip/wave20-fix3-unverified`：从 main 分离的 W20 fix3 候选，**未完成、未部署、不可发布**。候选只替换五个源码文件、增加一份测试和 WIP 说明；不能覆盖 main 或生产源码。
 - 整体验收仍为 **BLOCKED**。旧候选自报测试不是独立验收；不得据此声称修复通过。
-- 私有仓库：[guoshivi/douyin-xuanpin](https://github.com/guoshivi/douyin-xuanpin)。源码备份发布与真实业务部署分开验收；上传源码不代表下载链修复通过，也不授权运行业务。
+- 仓库（当前为公开仓库）：[guoshivi/douyin-xuanpin](https://github.com/guoshivi/douyin-xuanpin)。公开范围仅限源码、测试与通用文档；运行资料仍按 [SECURITY](docs/SECURITY.md) 排除。源码备份发布与真实业务部署分开验收；上传源码不代表下载链修复通过，也不授权运行业务。
 
 ## 5 分钟安全上手（不触发业务）
 
@@ -35,7 +35,7 @@ node --test tests/policy.test.mjs tests/priorities.test.mjs tests/display.test.m
 | 工具 | 用途 | 安全上手是否需要 |
 |---|---|---|
 | Node.js >=22 | ES Modules、内置测试、SQLite 模块 | 是 |
-| Git / GitHub CLI | 本地版本控制与经批准的私有备份 | 本地审核用 |
+| Git / GitHub CLI | 本地版本控制与经批准的源码备份 | 本地审核用 |
 | Ego 浏览器 CLI | 经授权的浏览器适配器执行 | 否；未运行 |
 | ffmpeg / ffprobe | 经授权的媒体处理与核验 | 否；未运行 |
 | lark-cli | 可选的飞书用户态同步 | 否；未运行 |

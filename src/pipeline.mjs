@@ -1,4 +1,10 @@
 import fs from 'node:fs/promises';
+import {readRows,mergeGroups,creatorPage,creatorSummary} from './selection-read-state.mjs';
+import {validateCreatorConfig} from './creator-signals.mjs';
+import {buildPlatformPrefilter} from './platform-prefilter.mjs';
+import {detailRows,publicDecision} from './decision-signals.mjs';
+import {selectionSettings,selectionEnabled,evaluateSelection} from './selection-filters.mjs';
+import {scanSettings,scanEnabled,scanCandidates,newScanProgress} from './scan-control.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {rankCandidates} from './priorities.mjs';
@@ -8,9 +14,10 @@ import {readCheckpoint,writeCheckpoint} from './private-checkpoint.mjs';
 import {failure,verifyIdentity,verifyCart,assertNumericId,publicCandidate,verifyReadback} from './verifier.mjs';
 import {writeVerifiedAsset,assetPath,hashFile,checkStorage} from './storage.mjs';
 import {probeMedia} from './media.mjs';
+const mediaControlError=e=>typeof e?.code==='string'&&(['EACCES','ENOSPC'].includes(e.code)||/^(SCAN_|RUN_DEADLINE_|TASK_|READ_TIMEOUT$|RECONCILE_ONLY$|USER_OWNED_OR_INACTIVE$|STORAGE_|ASSET_|ARCHIVE_|LEDGER_|HTTP_(401|403)_)/.test(e.code)||/UNCERTAIN|PERMISSION_DENIED/.test(e.code));
 export function summarize(task){const rows=task.products??[];return {candidate_count:task.candidates?.length??0,selected_count:rows.length,products_failed:rows.filter(p=>p.failure).length,cart_verified:rows.filter(p=>p.cart?.verified===true).length,feishu_verified:task.snapshot?.execution_mode==='core_only'?0:rows.filter(p=>p.feishu?.verified===true).length,videos_expected:rows.reduce((n,p)=>n+(p.frozen?.videos?.length??0),0),videos_verified:rows.reduce((n,p)=>n+(p.videos??[]).filter(v=>v.state==='verified').length,0),videos_unavailable:rows.reduce((n,p)=>n+(p.videos??[]).filter(v=>v.state==='unavailable').length,0),videos_failed:rows.reduce((n,p)=>n+(p.videos??[]).filter(v=>v.state==='failed').length,0),images_verified:rows.reduce((n,p)=>n+(p.images??[]).filter(v=>v.state==='verified').length,0),needs_review:rows.filter(p=>p.candidate.provisional_reason||p.decision?.reason).length,uncertain:task.error_code?.includes('UNCERTAIN')||task.state==='uncertain'};}
 export async function executePipeline(task,{adapter,ledger,privateRoot,ctx,save}){
- const snapshot=task.snapshot,mode=snapshot.execution_mode??'integrated';if(!['core_only','integrated'].includes(mode))throw failure('TASK_MODE_INVALID');const coreOnly=mode==='core_only',effectivePolicy={...snapshot.policy,limits:snapshot.limits};const args=(candidate,extra={})=>({candidate,snapshot,ctx,...extra});
+ const snapshot=task.snapshot,mode=snapshot.execution_mode??'integrated';if(!['core_only','integrated'].includes(mode))throw failure('TASK_MODE_INVALID');const collectOnly=selectionSettings(snapshot.policy.selection).mode==='collect_only',filterOn=selectionEnabled(snapshot.policy);const coreOnly=mode==='core_only',effectivePolicy={...snapshot.policy,limits:snapshot.limits};const args=(candidate,extra={})=>({candidate,snapshot,ctx,...extra});
  const persist=()=>{task.summary=summarize(task);save(task);};const finalChecks=[],assetChecks=[];const digest=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
  async function verifyAsset(key,kind,expected){
   const action=ledger.action(key);if(action?.state!=='verified')throw failure('ASSET_LEDGER_READBACK_FAILED');verifyReadback(expected,action.result);
@@ -30,7 +37,43 @@ export async function executePipeline(task,{adapter,ledger,privateRoot,ctx,save}
   catch(e){throw failure(e.code==='USER_OWNED_OR_INACTIVE'?e.code:'SIDE_EFFECT_UNCERTAIN');}
   finally{ctx.inFlight=false;}
  }
- if(!task.candidates){const candidates=await read(()=>adapter.discoverCandidates(args()));if(!Array.isArray(candidates))throw failure('CANDIDATES_INVALID');const unique=new Map();for(const p of candidates.slice(0,snapshot.limits.max_candidates)){verifyIdentity(p);const clean=publicCandidate(p);assertPublicSafe(clean);if(unique.has(p.commodity_id)&&unique.get(p.commodity_id).product_id!==p.product_id)throw failure('CANDIDATE_ID_CONFLICT');unique.set(p.commodity_id,clean);}const kept=[...unique.values()].filter(x=>categoriesResult(x,effectivePolicy).state!=='reject');const filtered=unique.size-kept.length;if(filtered>0)(task.notes??=[]).push('CATEGORY_FILTERED:'+filtered);const rank=rankCandidates(kept,effectivePolicy,{archiveDate:snapshot.seasonal_reference_date});task.candidates=rank.ranked;task.products=rank.selected.map(candidate=>({candidate:publicCandidate(candidate),videos:[],images:[]}));persist();}
+ if(collectOnly&&!ctx.reconcileOnly)ctx.checkpoint();
+ const refreshReadCandidates=()=>{const scan=scanSettings(snapshot.policy.scan_control),kept=task.scan_observation.filter(c=>collectOnly||categoriesResult(c,effectivePolicy).state!=='reject'),rank=rankCandidates(kept,effectivePolicy,{archiveDate:snapshot.seasonal_reference_date});task.scan_progress??=newScanProgress();task.candidates=scanCandidates(readRows(task,detailRows(task,rank.ranked)),scan,c=>evaluateSelection(c,effectivePolicy),task.scan_progress);task.scan_progress.observed_unique+=task.scan_observation.length-kept.length;task.scan_progress.category_skipped+=task.scan_observation.length-kept.length;task.products??=[];};
+ if(snapshot.selection_read_version===1&&!ctx.reconcileOnly){readRows(task,task.scan_observation??[]);const requests=buildPlatformPrefilter(snapshot.policy.selection?.prefilter).requests??[];for(let i=task.prefilter_groups.length;i<requests.length;i++){ctx.checkpoint();task.stage='prefilter_discover';persist();const result=await read(()=>adapter.readPrefilterGroup(args(undefined,{prefilter_group:i})));ctx.checkpoint();if(result?.schema_version!==1||result.group_index!==i||JSON.stringify(result.request)!==JSON.stringify(requests[i])||!Array.isArray(result.candidates))throw failure('PREFILTER_RECEIPT_INVALID');const candidates=result.candidates.map(c=>{verifyIdentity(c);if(c.creator_sample!==undefined||c.selection_decision!==undefined)throw failure('PREFILTER_RECEIPT_INVALID');return publicCandidate(c);});const groups=[...task.prefilter_groups,{schema_version:1,group_index:i,request:requests[i],candidates}];const observation=mergeGroups(groups,snapshot.limits.max_candidates);ctx.checkpoint();task.prefilter_groups=groups;task.scan_observation=observation;refreshReadCandidates();persist();}}
+ if(!task.discovery_done){
+  const candidates=await read(()=>adapter.discoverCandidates(args()));if(!Array.isArray(candidates))throw failure('CANDIDATES_INVALID');const unique=new Map();
+  for(const p of candidates.slice(0,snapshot.limits.max_candidates)){verifyIdentity(p);if((snapshot.selection_detail_version===1&&p.selection_decision!==undefined)||(snapshot.selection_read_version===1&&p.creator_sample!==undefined))throw failure('CANDIDATES_INVALID');const clean=publicCandidate(p);assertPublicSafe(clean);if(unique.has(p.commodity_id)&&unique.get(p.commodity_id).product_id!==p.product_id)throw failure('CANDIDATE_ID_CONFLICT');unique.set(p.commodity_id,clean);}
+  const prefiltered=snapshot.selection_read_version===1&&task.prefilter_groups?.length?mergeGroups(task.prefilter_groups,snapshot.limits.max_candidates):null;
+  const kept=(prefiltered??[...unique.values()]).filter(x=>collectOnly||categoriesResult(x,effectivePolicy).state!=='reject');const filtered=(prefiltered??[...unique.values()]).length-kept.length;if(filtered>0)(task.notes??=[]).push('CATEGORY_FILTERED:'+filtered);
+  const rank=rankCandidates(kept,effectivePolicy,{archiveDate:snapshot.seasonal_reference_date}),scan=scanSettings(snapshot.policy.scan_control);
+  if(snapshot.selection_read_version===1||snapshot.selection_detail_version===1||scanEnabled(scan)){task.scan_observation=prefiltered??[...unique.values()];task.scan_progress??=newScanProgress();task.candidates=scanCandidates(readRows(task,detailRows(task,rank.ranked)),scan,c=>evaluateSelection(c,effectivePolicy),task.scan_progress);task.scan_progress.observed_unique+=filtered;task.scan_progress.category_skipped+=filtered;}
+  else task.candidates=collectOnly||filterOn?rank.ranked.map(c=>{const {signals,...selection}=evaluateSelection(c,effectivePolicy);return {...c,selection};}):rank.ranked;
+  const admitted=new Set(task.candidates.map(c=>c.commodity_id));task.products=(collectOnly?[]:rank.selected.filter(c=>admitted.has(c.commodity_id)&&(!filterOn||evaluateSelection(c,effectivePolicy).state==='matched'))).map(candidate=>({candidate:publicCandidate(candidate),videos:[],images:[]}));task.discovery_done=true;persist();
+ }
+ if(snapshot.selection_detail_version===1&&!ctx.reconcileOnly){
+  detailRows(task,task.scan_observation??[]);
+  const scan=scanSettings(snapshot.policy.scan_control),kept=task.scan_observation.filter(c=>collectOnly||categoriesResult(c,effectivePolicy).state!=='reject'),rank=rankCandidates(kept,effectivePolicy,{archiveDate:snapshot.seasonal_reference_date});
+  for(const candidate of rank.ranked){
+   ctx.checkpoint();
+   if(scan.target_enabled&&task.scan_progress.matched>=scan.target_matches)break;
+   if(!task.candidates.some(c=>c.commodity_id===candidate.commodity_id)||task.selection_details.some(d=>d.commodity_id===candidate.commodity_id))continue;
+   if(evaluateSelection(candidate,effectivePolicy).state==='rejected')continue;
+   task.stage='selection_decision';persist();ctx.checkpoint();
+   const result=await read(()=>adapter.readSelectionDecision(args(candidate)));ctx.checkpoint();
+   const decision=publicDecision(result);if(JSON.stringify(decision)!==JSON.stringify(result))throw failure('SELECTION_DETAIL_INVALID');
+   const next={...task,selection_details:[...task.selection_details,{commodity_id:candidate.commodity_id,fetch_state:'completed',decision}]};
+   const projected=readRows(next,detailRows(next,rank.ranked)),progress={...task.scan_progress};
+   const candidates=scanCandidates(projected,scan,c=>evaluateSelection(c,effectivePolicy),progress);progress.observed_unique+=task.scan_observation.length-kept.length;progress.category_skipped+=task.scan_observation.length-kept.length;
+   ctx.checkpoint();task.selection_details=next.selection_details;Object.assign(task.scan_progress,progress);task.candidates=candidates;persist();
+  }
+ }
+ if(snapshot.selection_read_version===1&&!ctx.reconcileOnly&&snapshot.policy.selection?.creator?.enabled){const cfg=validateCreatorConfig(snapshot.policy.selection.creator);for(const c of [...task.candidates]){if(evaluateSelection(c,effectivePolicy).state!=='matched')continue;for(const source of cfg.mode==='both'?['video','live']:[cfg.mode]){while(true){const pages=task.creator_pages.filter(p=>p.promotion_id===c.promotion_id),coverage=creatorSummary(pages,cfg).coverage.find(x=>x.source===source);if(coverage.fetch_state==='completed')break;ctx.checkpoint();task.stage='creator_sample';persist();const page_no=coverage.pages_observed+1,result=await read(()=>adapter.readCreatorSample(args(c,{creator_request:{source,page_no}})));ctx.checkpoint();const page=creatorPage(result,c,source,page_no);if(JSON.stringify(page)!==JSON.stringify(result))throw failure('CREATOR_RECEIPT_INVALID');task.creator_pages.push(page);refreshReadCandidates();persist();}}}}
+ if(collectOnly){
+  if((task.products??[]).length||snapshot.storage_identity)throw failure('TASK_MODE_CONFLICT');
+  ctx.checkRead();if(!ctx.reconcileOnly)ctx.checkpoint();task.stage='finish';persist();
+  if(adapter.finish){const key='phase4:finish:'+task.run_id,prior=ledger.action(key);if(prior?.state==='uncertain')throw failure('FINISH_UNCERTAIN');if(!prior){ctx.checkpoint();ledger.begin(key,task.run_id,'browser_finish',{});ctx.inFlight=true;try{const result=await adapter.finish(args());if(result?.finished!==true)throw failure('FINISH_UNCONFIRMED');ledger.commit(key,{finished:true});}finally{ctx.inFlight=false;}}}
+  if(ledger.pending(task.run_id).length)throw failure('SIDE_EFFECT_UNCERTAIN');ctx.checkRead();if(!ctx.reconcileOnly)ctx.checkpoint();task.stage='settled';task.state='completed';task.error_code=null;persist();return task;
+ }
  // Wave18(B)：单品失败隔离+候选递补。队列＝已入选品（保持原序）＋其余候选（按 commodity_id 去重、按序）；处理至完成配额（＝max_cart_additions，≤3）。
 // 逐品处理块整体 try/catch：SKIP_LIST 码→product.failure={stage,code}＋note('SKIPPED_'+code)＋续跑下一候选（已发生效果不回滚不重发）；
 // 其余码（含 UNCERTAIN/RUN_DEADLINE_EXPIRED/TASK_PAUSED/USER_OWNED_OR_INACTIVE/SPACE_*/PAGE_SPACE_MISMATCH/LIBRARY_NOT_READY/CART_*/存储账本归档类）原样抛。
@@ -41,16 +84,17 @@ const quota=snapshot.limits.max_cart_additions,queuedIds=new Set(task.products.m
 let completedCount=0,terminalCount=0,failuresSinceSuccess=0,lastSkipError=null;
 for(const queuedCandidate of queue){
  if(terminalCount>=quota)break;
+ if(filterOn&&evaluateSelection(queuedCandidate,effectivePolicy).state!=='matched')continue;
  let product=task.products.find(p=>p.candidate.commodity_id===queuedCandidate.commodity_id);
  if(!product){product={candidate:publicCandidate(queuedCandidate),videos:[],images:[]};task.products.push(product);persist();}
  if(product.failure)continue;
  const localChecks=[],localAssetChecks=[];
  try{
   const candidate=product.candidate;ctx.checkRead();task.stage='cart';persist();
-  if(!product.cart){product.cart=await effect(`buyin:cart:${candidate.commodity_id}`,'cart_add',{commodity_id:candidate.commodity_id,product_id:candidate.product_id},()=>adapter.addToCart(args(candidate)),()=>adapter.readCart(args(candidate)),x=>verifyCart(candidate,x));persist();}
-  localChecks.push(async()=>verifyCart(candidate,await read(()=>adapter.readCart(args(candidate)))));
+  if(!product.cart){product.cart=await effect(`buyin:cart:${candidate.commodity_id}`,'cart_add',{commodity_id:candidate.commodity_id,product_id:candidate.product_id},()=>adapter.addToCart(args(candidate)),()=>adapter.readCart(args(candidate,{scanReconcile:true})),x=>verifyCart(candidate,x));persist();}
+  localChecks.push(async()=>verifyCart(candidate,await read(()=>adapter.readCart(args(candidate,{scanReconcile:true})))));
   if(product.skipped){finalChecks.push(...localChecks);assetChecks.push(...localAssetChecks);terminalCount+=1;continue;}
-  const cartEvidence={...await read(()=>adapter.readCart(args(candidate))),verified:true};verifyCart(candidate,cartEvidence);
+  const cartEvidence={...await read(()=>adapter.readCart(args(candidate,{scanReconcile:true}))),verified:true};verifyCart(candidate,cartEvidence);
   ctx.checkRead();task.stage='decision';persist();
   const imagesFile=path.join(privateRoot,candidate.commodity_id+'-images.json');const validateImages=images=>{if(!Array.isArray(images)||images.some(x=>typeof x!=='string'&&!(x&&typeof x==='object'&&Buffer.isBuffer(x.bytes))))throw failure('PRIVATE_IMAGES_INVALID');};
   let imageSources=await readCheckpoint(imagesFile,validateImages);if(imageSources!==null&&product.private_checkpoints?.images)verifyReadback(product.private_checkpoints.images,digest(imageSources));
@@ -70,14 +114,14 @@ for(const queuedCandidate of queue){
    if(prior){if(readOnly)throw failure('ARCHIVE_UNCERTAIN');if(!prior.result?.sha256)throw failure('ARCHIVE_UNCERTAIN');const target=path.join(snapshot.video_root,prior.result.relative_path);await checkStorage(snapshot.storage_identity);const actual=await hashFile(target);verifyReadback({sha256:prior.result.sha256,bytes:prior.result.bytes},actual);const bytes=await fs.readFile(target);await probeMedia(bytes,{kind,durationMs:prior.result.duration_ms,privateRoot,signal:ctx.signal});return ledger.commit(key,{...prior.result,state:'verified'},{asset:{kind,path:target,sha256:actual.sha256,bytes:actual.bytes}});}
    if(readOnly)throw failure('ARCHIVE_UNCERTAIN');ctx.checkpoint();let download;
    try{download=kind==='video'?(item.bytes?{bytes:item.bytes,duration_ms:item.duration_ms,quality:'TEST'}:await read(()=>adapter.downloadVideo(base))):await read(()=>adapter.downloadImage(base));}
-   catch(e){const result={aweme_id:item.aweme_id,index,kind,state:'failed',reason:e.code??'MEDIA_FAILED'};return result;}
+   catch(e){if(mediaControlError(e))throw e;const result={aweme_id:item.aweme_id,index,kind,state:'failed',reason:e.code??'MEDIA_FAILED'};return result;}
    if(download?.unavailable){return {aweme_id:item.aweme_id,title:item.title,index:item.index??index,kind,state:'unavailable',reason:download.reason};}
-   if(!Buffer.isBuffer(download?.bytes))throw failure('MEDIA_BYTES_MISSING');let info;try{info=await probeMedia(download.bytes,{kind,durationMs:download.duration_ms,privateRoot,signal:ctx.signal});}catch(e){return {aweme_id:item.aweme_id,title:item.title,index:item.index??index,kind,state:'failed',reason:e.code??'MEDIA_PROBE_FAILED'};}const extension=kind==='video'?'mp4':info.extension;const params={faults:ctx.storageFaults,root:snapshot.video_root,archiveDate:snapshot.archive_date,commodityId:candidate.commodity_id,awemeId:item.aweme_id,kind,extension,imageIndex:index,identity:snapshot.storage_identity,checkpoint:()=>ctx.checkpoint({allowPause:true})};
+   if(!Buffer.isBuffer(download?.bytes))throw failure('MEDIA_BYTES_MISSING');let info;try{info=await probeMedia(download.bytes,{kind,durationMs:download.duration_ms,privateRoot,signal:ctx.signal});}catch(e){if(mediaControlError(e))throw e;return {aweme_id:item.aweme_id,title:item.title,index:item.index??index,kind,state:'failed',reason:e.code??'MEDIA_PROBE_FAILED'};}const extension=kind==='video'?'mp4':info.extension;const params={faults:ctx.storageFaults,root:snapshot.video_root,archiveDate:snapshot.archive_date,commodityId:candidate.commodity_id,awemeId:item.aweme_id,kind,extension,imageIndex:index,identity:snapshot.storage_identity,checkpoint:()=>ctx.checkpoint({allowPause:true})};
    const target=assetPath(params),sha256=(await import('node:crypto')).createHash('sha256').update(download.bytes).digest('hex');const intended={aweme_id:item.aweme_id,title:item.title,index:item.index??index,publish_time:item.publish_time,kind,...info,duration_ms:download.duration_ms,quality:download.quality,author:download.author,relative_path:path.relative(snapshot.video_root,target),sha256,bytes:download.bytes.length};ctx.checkpoint();ledger.begin(key,task.run_id,kind+'_download',{commodity_id:candidate.commodity_id,product_id:candidate.product_id,aweme_id:item.aweme_id});ledger.receipt(key,intended);ctx.inFlight=true;
    try{const asset=await writeVerifiedAsset({...params,bytes:download.bytes});return ledger.commit(key,{...intended,state:'verified'},{asset});}catch{throw failure('ARCHIVE_UNCERTAIN');}finally{ctx.inFlight=false;}
   }
   task.stage='archive';persist();
-  for(const [i,v]of frozen.videos.entries()){const existing=product.videos.find(x=>x.aweme_id===v.aweme_id),actual=await archive(v,'video',i+1);if(existing)verifyReadback(existing,actual);else{product.videos.push(actual);persist();}}
+  for(const [i,v]of frozen.videos.entries()){const existing=product.videos.find(x=>x.aweme_id===v.aweme_id),actual=await archive(v,'video',i+1);if(actual?.state==='unavailable'&&['HTTP_401_PERMISSION_DENIED','HTTP_403_PERMISSION_DENIED'].includes(actual.reason))throw failure(actual.reason);if(existing)verifyReadback(existing,actual);else{product.videos.push(actual);persist();}}
   for(const [i,image]of imageSources.entries()){const existing=product.images.find(x=>x.index===i+1),actual={...await archive(image,'image',i+1),index:i+1};if(existing)verifyReadback(existing,actual);else{product.images.push(actual);persist();}}
   if(product.images.length!==imageSources.length)throw failure('IMAGE_SETTLEMENT_INCOMPLETE');
   if(product.videos.length!==frozen.videos.length)throw failure('VIDEO_SETTLEMENT_INCOMPLETE');if(product.videos.some(x=>x.state==='failed')||product.images.some(x=>x.state!=='verified'))throw failure('MEDIA_FAILED');
@@ -102,5 +146,5 @@ for(const queuedCandidate of queue){
 }
 if(completedCount===0&&lastSkipError)throw lastSkipError;
  for(const check of finalChecks)await check();if(ledger.pending(task.run_id).length)throw failure('SIDE_EFFECT_UNCERTAIN');ctx.checkRead();task.stage='finish';persist();if(adapter.finish){const key='phase4:finish:'+task.run_id,prior=ledger.action(key);if(prior?.state==='uncertain')throw failure('FINISH_UNCERTAIN');if(!prior){ctx.checkpoint();ledger.begin(key,task.run_id,'browser_finish',{});ctx.inFlight=true;try{const result=await adapter.finish(args());if(result?.finished!==true)throw failure('FINISH_UNCONFIRMED');ledger.commit(key,{finished:true});}finally{ctx.inFlight=false;}}}
- if(ledger.pending(task.run_id).length)throw failure('SIDE_EFFECT_UNCERTAIN');for(const check of assetChecks)await check();task.stage='settled';task.state='completed';task.error_code=null;persist();return task;
+ if(ledger.pending(task.run_id).length)throw failure('SIDE_EFFECT_UNCERTAIN');for(const check of assetChecks)await check();if(filterOn){ctx.checkRead();if(!ctx.reconcileOnly)ctx.checkpoint();}task.stage='settled';task.state='completed';task.error_code=null;persist();return task;
 }

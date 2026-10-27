@@ -1,11 +1,17 @@
 import fs from 'node:fs/promises';
+import {READ_DRAFT_DEFAULTS,SCAN_DRAFT_KEYS,readDraft,readFromDraft} from './selection-read-state.mjs';
+import {DECISION_DRAFT_DEFAULTS,decisionDraft,decisionFromDraft} from './decision-signals.mjs';
+import {SCAN_FIELDS,scanSettings,scanDraft,scanFromDraft} from './scan-control.mjs';
+import {selectionSettings} from './selection-filters.mjs';
 import { DEFAULT_VIDEO_ROOT, getVideoRoot, validateVideoRoot } from './storage-settings.mjs';
 
 export const EDITABLE_DRAFT_FIELDS = Object.freeze([
+  ...SCAN_DRAFT_KEYS,...Object.keys(READ_DRAFT_DEFAULTS),...Object.keys(DECISION_DRAFT_DEFAULTS),
   'seasonalEnabled','seasonalReferenceDate','seasonalNotes','recentSurgeEnabled','recentDays','baselineDays','minimumGrowthRatePercent',
   'includeCategories','excludeCategories','priceMin','priceMax','priceBasis','commissionRatePercent','commissionPerOrder',
   'salesPeriod','salesMin','conversionScope','conversionDenominator','conversionMinPercent','conversionMinSample',
-  'missingDataStrategy','maxCartAdditions','maxLibraryPages','maxCandidates','videoSaveRoot'
+  'missingDataStrategy','maxCartAdditions','maxLibraryPages','maxCandidates','videoSaveRoot',
+  'collectOnly','dailySalesWindow','dailySalesMin','risingDaysMin','firstPositiveDaysMax','dailySalesMax','risingDaysMax','firstPositiveDaysMin','dailySalesEnabled','risingDaysEnabled','firstPositiveEnabled','selectionCombination'
 ]);
 
 const PRICE_BASES = new Set(['displayed','take_home','sku']);
@@ -14,7 +20,7 @@ const CONVERSION_SCOPES = new Set(['product','video']);
 const CONVERSION_DENOMINATORS = new Set(['paid_orders','orders','clicks','visitors','exposure']);
 const MISSING_STRATEGIES = new Set(['decision_page','manual_review']);
 const BUSINESS_MODES = new Set(['affiliate','self_store']);
-const POLICY_KEYS = new Set(['schema_version','policy_version','confirmed','business_modes','categories','priorities','focus_metrics','numeric_filters_enabled','rules','decisions','allow_provisional_cart','limits','video_scope','feishu','storage']);
+const POLICY_KEYS = new Set(['schema_version','policy_version','confirmed','business_modes','categories','priorities','focus_metrics','numeric_filters_enabled','rules','decisions','allow_provisional_cart','limits','video_scope','feishu','storage','selection','scan_control']);
 const RULE_KEYS = new Set(['metric','op','min','max','unit','scope','period','denominator','min_sample','required']);
 const METRICS = new Set(['price','commission_rate','commission_amount','sales','conversion_rate']);
 const FOCUS_METRICS = new Set(['price','commission_rate','sales','conversion_rate']);
@@ -105,6 +111,17 @@ function ensureKnown(obj, allowed, prefix, errors) {
   for (const key of Object.keys(obj)) if (!allowed.has(key)) setError(errors, `${prefix}.${key}`, '未知字段');
 }
 
+const selectionFields=[...SCAN_DRAFT_KEYS,...Object.keys(READ_DRAFT_DEFAULTS),...Object.keys(DECISION_DRAFT_DEFAULTS),'collectOnly','dailySalesWindow','dailySalesMin','risingDaysMin','firstPositiveDaysMax','dailySalesMax','risingDaysMax','firstPositiveDaysMin','dailySalesEnabled','risingDaysEnabled','firstPositiveEnabled','selectionCombination'];
+function selectionFromDraft(draft,current){
+ const s=readFromDraft(draft,selectionSettings(current));
+ if(Object.keys(DECISION_DRAFT_DEFAULTS).some(k=>Object.hasOwn(draft,k)))s.decision=decisionFromDraft(draft,s.decision);
+ if(Object.hasOwn(draft,'collectOnly')){if(typeof draft.collectOnly!=='boolean')throw new Error('selection:INVALID_BOOLEAN');s.mode=draft.collectOnly?'collect_only':'archive';}
+ if(Object.hasOwn(draft,'dailySalesWindow')){const n=optionalNumber(draft.dailySalesWindow,{min:1,max:30});if(!Number.isSafeInteger(n))throw new Error('selection:INVALID_WINDOW');s.daily_window=n;}
+ for(const [field,key]of [['dailySalesMin','daily_min'],['risingDaysMin','rising_days_min'],['firstPositiveDaysMax','first_positive_days_max'],['dailySalesMax','daily_max'],['risingDaysMax','rising_days_max'],['firstPositiveDaysMin','first_positive_days_min']])if(Object.hasOwn(draft,field))s[key]=optionalNumber(draft[field],{max:Number.MAX_SAFE_INTEGER});
+ for(const [field,key]of [['dailySalesEnabled','daily_enabled'],['risingDaysEnabled','rising_enabled'],['firstPositiveEnabled','first_positive_enabled']])if(Object.hasOwn(draft,field)){if(typeof draft[field]!=='boolean')throw new Error('selection:INVALID_BOOLEAN');s[key]=draft[field];}
+ if(Object.hasOwn(draft,'selectionCombination'))s.combination=draft.selectionCombination;
+ return selectionSettings(s);
+}
 function normalizedDraft(draft) {
   return {
     videoSaveRoot: validateVideoRoot(draft.videoSaveRoot),
@@ -139,6 +156,8 @@ export function validateDraft(draft, categoryCatalog = []) {
   const errors = {};
   if (!draft || typeof draft !== 'object' || Array.isArray(draft)) return {valid:false, errors:{draft:'必须是对象'}};
   for (const key of Object.keys(draft)) if (!EDITABLE_DRAFT_FIELDS.includes(key)) setError(errors, key, '未知或受保护字段');
+  try{selectionFromDraft(draft);}catch{setError(errors,'selection','筛选设置无效：日销非负，连涨1–30，首次正销1–30天');}
+  try{scanFromDraft(draft);}catch{setError(errors,'scan_control','扫描设置无效：开关须布尔，次数须正整数，毫秒须0–2147483647整数');}
   const d = {};
   const parsers = {
     videoSaveRoot: () => validateVideoRoot(draft.videoSaveRoot),
@@ -186,7 +205,10 @@ export function policyToDraft(policy) {
   const p = policy ?? defaultPolicy();
   const rule = metric => p.rules?.find(r => r.metric === metric);
   const price = rule('price'), commissionRate = rule('commission_rate'), commissionAmount = rule('commission_amount'), sales = rule('sales'), conversion = rule('conversion_rate');
+  const s=selectionSettings(p.selection);
   return {
+    ...scanDraft(p.scan_control),...readDraft(s),...decisionDraft(s.decision),
+    ...(p.selection===undefined?{}:{collectOnly:s.mode==='collect_only',dailySalesWindow:String(s.daily_window),dailySalesMin:s.daily_min===null?'':String(s.daily_min),risingDaysMin:s.rising_days_min===null?'':String(s.rising_days_min),firstPositiveDaysMax:s.first_positive_days_max===null?'':String(s.first_positive_days_max),selectionCombination:s.combination??'all',dailySalesMax:s.daily_max==null?'':String(s.daily_max),risingDaysMax:s.rising_days_max==null?'':String(s.rising_days_max),firstPositiveDaysMin:s.first_positive_days_min==null?'':String(s.first_positive_days_min),dailySalesEnabled:s.daily_enabled??(s.daily_min!=null||s.daily_max!=null),risingDaysEnabled:s.rising_enabled??(s.rising_days_min!=null||s.rising_days_max!=null),firstPositiveEnabled:s.first_positive_enabled??(s.first_positive_days_min!=null||s.first_positive_days_max!=null)}),
     seasonalEnabled: p.priorities.seasonal.enabled,
     videoSaveRoot: getVideoRoot(p),
     seasonalReferenceDate: p.priorities.seasonal.reference_date ?? '',
@@ -212,6 +234,8 @@ export function draftToPolicy(draft, currentPolicy = defaultPolicy(), categoryCa
   if (!check.valid) { const e = new Error(Object.entries(check.errors).map(([k,v]) => `${k}:${v}`).join(';')); e.errors=check.errors; throw e; }
   const d = normalizedDraft(draft);
   const p = structuredClone(currentPolicy ?? defaultPolicy());
+  if(Object.keys(SCAN_FIELDS).some(k=>Object.hasOwn(draft,k)))p.scan_control=scanFromDraft(draft,p.scan_control);
+  if(selectionFields.some(k=>Object.hasOwn(draft,k)))p.selection=selectionFromDraft(draft,p.selection);
   p.storage = { video_root: d.videoSaveRoot };
   p.categories = { include: d.includeCategories, exclude: d.excludeCategories, optional: true, confirmed: true };
   p.priorities.seasonal.enabled = d.seasonalEnabled; p.priorities.seasonal.reference_date = d.seasonalReferenceDate; p.priorities.seasonal.notes = d.seasonalNotes;
@@ -233,6 +257,8 @@ export function draftToPolicy(draft, currentPolicy = defaultPolicy(), categoryCa
 export function validatePolicy(policy, categoryCatalog = []) {
   const errors={};
   ensureKnown(policy,POLICY_KEYS,'policy',errors); if (Object.keys(errors).length) return {valid:false,errors};
+  try{selectionSettings(policy.selection);}catch{setError(errors,'selection','筛选设置无效');}
+  try{scanSettings(policy.scan_control);}catch{setError(errors,'scan_control','扫描设置无效');}
   if (policy.schema_version !== 2 || typeof policy.policy_version !== 'string' || policy.policy_version.length===0 || policy.confirmed !== true) setError(errors,'policy_version','配置版本或 confirmed 无效');
   if (!Array.isArray(policy.business_modes) || policy.business_modes.length!==BUSINESS_MODES.size || new Set(policy.business_modes).size!==BUSINESS_MODES.size || !policy.business_modes.every(x=>BUSINESS_MODES.has(x))) setError(errors,'business_modes','业务模式无效');
   if (!policy.categories || !Array.isArray(policy.categories.include) || !Array.isArray(policy.categories.exclude)) setError(errors,'categories','类目结构无效');

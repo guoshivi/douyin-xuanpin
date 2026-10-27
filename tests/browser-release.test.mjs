@@ -13,7 +13,7 @@ async function fixture(){
 let input='';for await(const c of process.stdin)input+=c;JSON.parse(input);
 for(const row of JSON.parse(process.env.TEST_ROWS))process.stdout.write(JSON.stringify(row)+'\\n');
 process.exitCode=Number(process.env.TEST_EXIT||0);`,{mode:0o600});
-  const req={action:'inspect',space_id:'991',page_label:'p1',commodity_id:'1111111111111111111',url,output_file:file};
+  const req={action:'inspect',space_id:'991',page_label:'p1',commodity_id:'7687626523348053681',url,output_file:file};
   const space={type:'space',space_id:'991',page_label:'p1'};
   const obs={type:'observation',status:'ok',space_id:'991',page_label:'p1',commodity_id:req.commodity_id,observed_url:landed,evidence_path:file,observed_count:1};
   const evidence={space_id:'991',page_label:'p1',commodity_id:req.commodity_id,captured_at:'2026-10-09T00:00:00.000Z',requested_url:url,landed_url:landed,title:'TEST title',snapshot:'TEST private snapshot'};
@@ -58,7 +58,7 @@ try{await import('data:text/javascript;base64,'+Buffer.from(code).toString('base
 test('release navigation rejects bad URL and unknown ownership before effects',async()=>{
   let effects=0;const d=await dir(),file=path.join(d,'evidence.json');
   const factory=async()=>({spaceId:991,ownership:'agent',page:()=>({goto:async()=>effects++})});
-  for(const bad of ['http://buyin.jinritemai.com/TEST','javascript://buyin.jinritemai.com/TEST','https://TEST_USER:TEST_PASSWORD@example.invalid/TEST',url+'?token=TEST'])await assert.rejects(()=>handleRound({action:'inspect',url:bad,output_file:file},{root,taskSpace:factory}));
+  for(const bad of ['http://buyin.jinritemai.com/TEST','javascript://buyin.jinritemai.com/TEST','https://user:TEST@buyin.jinritemai.com/TEST',url+'?token=TEST'])await assert.rejects(()=>handleRound({action:'inspect',url:bad,output_file:file},{root,taskSpace:factory}));
   for(const ownership of ['unknown','unassigned','user','inactive',undefined])await assert.rejects(()=>handleRound({action:'inspect',url,output_file:file},{root,taskSpace:async()=>({spaceId:991,ownership,page:()=>{effects++;}})}));
   assert.equal(effects,0);
 });

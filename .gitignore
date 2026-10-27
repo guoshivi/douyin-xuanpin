@@ -12,6 +12,7 @@ public-uploads/
 config/*
 !config/selection.example.json
 *.local.json
+!config/site-map.local.json
 *.sqlite
 *.sqlite-*
 *.db

@@ -6,7 +6,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 
 // TEST ONLY: every executable, request and evidence file is isolated; no real CLI/network.
-const workspace=path.resolve(fileURLToPath(new URL('..',import.meta.url)));
+const workspace=process.env.XUANPIN_ROOT??process.cwd();
 const root=path.resolve(process.env.SOURCE_ROOT??fileURLToPath(new URL('..',import.meta.url)));
 assert.ok(root===workspace||root.startsWith(workspace+'/data/acceptance/phase2/implementation-'));
 const acceptance=path.join(root,'data/acceptance/phase2/real-channel-fix');
@@ -19,7 +19,7 @@ assert.ok([path.join(root,'src/browser/protocol.mjs'),path.join(root,'data/accep
 const {runBrowserRound}=await import(pathToFileURL(modulePath).href);
 const url='https://buyin.jinritemai.com/TEST-real-channel';
 const landed=url+'?observed=TEST';
-const spaceId='TEST-991',commodity='1111111111111111111';
+const spaceId='TEST-991',commodity='7687626523348053681';
 const sentinel='TEST_SECRET_DIAGNOSTIC_SENTINEL';
 const limit=1024*1024;
 

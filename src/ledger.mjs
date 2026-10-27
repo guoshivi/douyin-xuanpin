@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {openStore} from './store.mjs';
 import {failure,verifyReadback} from './verifier.mjs';
@@ -7,7 +8,22 @@ export function openLedger(file,{faults={}}={}) {
  db.exec("PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS task_runs(run_id TEXT PRIMARY KEY,payload_json TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS task_controls(run_id TEXT PRIMARY KEY,pause_requested INTEGER NOT NULL)");let closed=false;
  const getAction=key=>{const r=db.prepare('SELECT * FROM actions WHERE action_key=?').get(key);return r?{...r,payload:JSON.parse(r.payload_json),result:r.result_json?JSON.parse(r.result_json):null}:null;};
  function transaction(fn){db.exec('BEGIN IMMEDIATE');try{fn();faults.beforeCommit?.();db.exec('COMMIT');}catch(e){try{db.exec('ROLLBACK');}catch{}throw failure('LEDGER_COMMIT_FAILED');}faults.afterCommit?.();}
+ const scanDigest=t=>crypto.createHash('sha256').update(JSON.stringify({run_id:t.run_id,snapshot:{...t.snapshot,deadline:undefined},progress:t.scan_progress,observation:t.scan_observation,candidates:t.candidates,products:t.products,browser:t.browser,...(t.snapshot.selection_detail_version!==undefined||t.selection_details!==undefined?{selection_detail_version:t.snapshot.selection_detail_version,selection_details:t.selection_details}:{}),...(t.snapshot.selection_read_version!==undefined||t.creator_pages!==undefined||t.prefilter_groups!==undefined?{selection_read_version:t.snapshot.selection_read_version,creator_pages:t.creator_pages,prefilter_groups:t.prefilter_groups}:{})})).digest('hex');
+ const hasScanTable=()=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='scan_receipts'").get();
  return {
+  hasScan(id){return hasScanTable()&&!!db.prepare('SELECT 1 FROM scan_receipts WHERE run_id=?').get(id);},
+  verifyScan(task){const r=task&&hasScanTable()?db.prepare('SELECT digest,deadline FROM scan_receipts WHERE run_id=?').get(task.run_id):null;if(!r||r.digest!==scanDigest(task)||!Number.isFinite(Date.parse(task.snapshot.deadline))||!Number.isFinite(Date.parse(r.deadline))||Date.parse(task.snapshot.deadline)>Date.parse(r.deadline))throw failure('SCAN_PROGRESS_INVALID');},
+  saveScan(task,{initialize=false}={}){
+   // Only explicit new scan tasks create evidence. Never repair a missing receipt.
+   if(initialize)db.exec('CREATE TABLE IF NOT EXISTS scan_receipts(run_id TEXT PRIMARY KEY,digest TEXT NOT NULL,deadline TEXT NOT NULL)');
+   else this.verifyScan(this.get(task.run_id));
+   db.exec('BEGIN IMMEDIATE');try{
+    if(initialize)db.prepare('INSERT INTO scan_receipts VALUES(?,?,?)').run(task.run_id,scanDigest(task),task.snapshot.deadline);
+    else {this.verifyScan(this.get(task.run_id));db.prepare('UPDATE scan_receipts SET digest=? WHERE run_id=?').run(scanDigest(task),task.run_id);}
+    this.save(task);faults.scanBeforeCommit?.(task);db.exec('COMMIT');
+   }catch(e){try{db.exec('ROLLBACK');}catch{}throw failure(e.code==='SCAN_PROGRESS_INVALID'?e.code:'LEDGER_COMMIT_FAILED');}
+   faults.scanAfterCommit?.(task);return this.get(task.run_id);
+  },
   save(task){db.prepare('INSERT INTO task_runs VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET payload_json=excluded.payload_json,updated_at=excluded.updated_at').run(task.run_id,JSON.stringify(task),new Date().toISOString());return this.get(task.run_id);},
   get(id){const r=db.prepare('SELECT payload_json FROM task_runs WHERE run_id=?').get(id);return r?JSON.parse(r.payload_json):null;},
   list(){return db.prepare('SELECT payload_json FROM task_runs ORDER BY updated_at DESC').all().map(r=>JSON.parse(r.payload_json));},

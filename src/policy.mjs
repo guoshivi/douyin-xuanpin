@@ -28,14 +28,18 @@ export function checkRule(metric, rule) {
   if ((high != null && high < min) || (low != null && low > max)) return 'reject';
   return 'needs_review';
 }
+let CATALOG=null;
+export function setCategoryCatalog(entries){CATALOG=entries instanceof Map?entries:new Map((entries||[]).map(c=>[String(c.id),String(c.name??'')]));}
+const catName=id=>CATALOG?CATALOG.get(String(id))||null:null;
+const inCategoryTree=(ids,root,names=[])=>{if(ids.includes(root))return true;const rn=catName(root);const hit=n=>!!rn&&(n===rn||n.startsWith(rn+'/'));if(names.some(hit))return true;if(!rn)return false;return ids.some(id=>{const n=catName(id);return !!n&&hit(n);});};
 export function categoriesResult(product, policy) {
   const include = policy.categories?.include ?? [], exclude = policy.categories?.exclude ?? [];
   if (!include.length && !exclude.length) return {state:'pass', reason:'未启用类目限制'};
   const ids = product.category_ids;
   if (!Array.isArray(ids) || !ids.every(x => typeof x === 'string')) return {state:'needs_review', reason:'商品类目缺失或不是字符串数组'};
   if (!ids.length) return {state:'needs_review', reason:'商品类目缺失，无法核验启用的类目限制'};
-  if (exclude.some(x => ids.includes(x))) return {state:'reject', reason:'命中排除类目'};
-  if (include.length && !include.some(x => ids.includes(x))) return {state:'reject', reason:'未命中包含类目'};
+  if (exclude.some(x => inCategoryTree(ids,x,product.category_names))) return {state:'reject', reason:'命中排除类目'};
+  if (include.length && !include.some(x => inCategoryTree(ids,x,product.category_names))) return {state:'reject', reason:'未命中包含类目'};
   return {state:'pass', reason:'类目限制已核验'};
 }
 export function evaluateProduct(product = {}, policy = {}) {

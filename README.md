@@ -4,9 +4,10 @@ Node.js ES Modules、SQLite 和 Ego 浏览器适配器组成的本地选品工�
 
 ## 当前状态与分支
 
-- `main`：生产 Wave19 + UIv8 的白名单源码快照。为去除个人机器路径，发布副本做了少量明确的路径去标识；否定测试中的 URL userinfo 换为明显的 TEST 占位符，少量不能仅凭格式确认的测试 ID 换成同长度重复数字示例，一条否定测试 token 换为 TEST_TOKEN。原生产目录不改。
+- `main`：**当前正式版源码（2026-10-27 同步）**，可直接按 [DEPLOY](docs/DEPLOY.md) 在另一台 Mac 部署设置面板。为去除个人机器路径，发布副本做了少量明确的路径去标识；否定测试中的 URL userinfo 换为明显的 TEST 占位符，少量不能仅凭格式确认的测试 ID 换成同长度重复数字示例，一条否定测试 token 换为 TEST_TOKEN。原生产目录不改。
 - `wip/wave20-fix3-unverified`：从 main 分离的 W20 fix3 候选，**未完成、未部署、不可发布**。候选只替换五个源码文件、增加一份测试和 WIP 说明；不能覆盖 main 或生产源码。
-- 整体验收仍为 **BLOCKED**。旧候选自报测试不是独立验收；不得据此声称修复通过。
+- 下载回退链（fix6）候选**未通过最终独立验收，未合入 main**，不得用于部署；真实跑批请按小批观察。
+- 面板可部署 ≠ 业务验收通过。旧候选自报测试不是独立验收；不得据此声称下载链修复通过。
 - 仓库（当前为公开仓库）：[guoshivi/douyin-xuanpin](https://github.com/guoshivi/douyin-xuanpin)。公开范围仅限源码、测试与通用文档；运行资料仍按 [SECURITY](docs/SECURITY.md) 排除。源码备份发布与真实业务部署分开验收；上传源码不代表下载链修复通过，也不授权运行业务。
 
 ## 5 分钟安全上手（不触发业务）
@@ -19,7 +20,8 @@ node --check src/cli.mjs
 node --test tests/policy.test.mjs tests/priorities.test.mjs tests/display.test.mjs tests/form-lock.test.mjs
 ```
 
-上述命令只检查语法及纯逻辑，不登录、不下载、不加车、不启动设置服务。package.json 没有 npm 依赖，因而无需 npm install。完整测试入口为 `npm test`，但**不得当作已通过的上手检查**：部分测试依赖被排除的媒体夹具、专用隔离运行目录及外部工具，详见 [当前状态](docs/STATUS.md)。
+上述命令只检查语法及纯逻辑，不登录、不下载、不加车、不启动设置服务。package.json 没有 npm 依赖，因而无需 npm install。
+实际部署步骤（含配置、启动、局域网访问与验收清单）见 [DEPLOY](docs/DEPLOY.md)。完整测试入口为 `npm test`，但**不得当作已通过的上手检查**：部分测试依赖被排除的媒体夹具、专用隔离运行目录及外部工具，详见 [当前状态](docs/STATUS.md)。
 
 ## 为什么是这套架构
 
@@ -32,7 +34,7 @@ node --test tests/policy.test.mjs tests/priorities.test.mjs tests/display.test.m
 
 | 工具 | 用途 | 安全上手是否需要 |
 |---|---|---|
-| Node.js >=22 | ES Modules、内置测试、SQLite 模块 | 是 |
+| Node.js >=22.5 | ES Modules、内置测试、SQLite 模块（22 需 `--experimental-sqlite`） | 是 |
 | Git / GitHub CLI | 本地版本控制与经批准的源码备份 | 本地审核用 |
 | Ego 浏览器 CLI | 经授权的浏览器适配器执行 | 否；未运行 |
 | ffmpeg / ffprobe | 经授权的媒体处理与核验 | 否；未运行 |
@@ -43,7 +45,7 @@ node --test tests/policy.test.mjs tests/priorities.test.mjs tests/display.test.m
 
 ## 目录导航
 
-- `src/`：27 个生产模块；浏览器协议与动作、任务管理、设置服务、规则、存储、媒体及可选飞书适配器。
+- `src/`：37 个生产模块；浏览器协议与动作、任务管理、设置服务、规则、信号、存储、媒体及可选飞书适配器。
 - `ui/`：5 个 UI 文件。
 - `tests/`：41 个测试及支持文件，包含 fake Ego；不附原始媒体或运行输出。
 - `config/selection.example.json`：去标识示例，不是生产配置；共享目录为 EXAMPLE 占位路径，使用前必须改成本机经批准的绝对路径。

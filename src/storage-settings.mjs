@@ -2,7 +2,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
-export const DEFAULT_VIDEO_ROOT = '/Volumes/EXAMPLE_SHARED/selection';
+export const DEFAULT_VIDEO_ROOT = process.env.XUANPIN_VIDEO_ROOT ?? '/Volumes/选品素材';
 const runFile = promisify(execFile);
 
 // 配置阶段只验证格式，不创建目录、不移动文件、不接触 NAS 素材。

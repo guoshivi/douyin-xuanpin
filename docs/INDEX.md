@@ -6,7 +6,7 @@
 |---|---|
 | 确认版本与验收边界 | [STATUS](STATUS.md) |
 | 看模块职责和数据流 | [ARCHITECTURE](ARCHITECTURE.md) |
-| 安全部署准备与离线自检 | [DEPLOY](DEPLOY.md) |
+| **换机部署步骤与验收清单** | [DEPLOY](DEPLOY.md) |
 | 交给另一位 AI | [AI-HANDOFF](AI-HANDOFF.md) |
 | 确认敏感资料和提交边界 | [SECURITY](SECURITY.md) |
 

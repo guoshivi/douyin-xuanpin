@@ -1,4 +1,7 @@
 import fs from 'node:fs/promises';
+import {readCreatorDetail} from './creator-detail.mjs';
+import {readPrefilter} from './platform-prefilter.mjs';
+import {readSelectionDetail} from './selection-detail.mjs';
 import {extractRows,libraryCandidates,extractDecision} from './extract.mjs';
 import {failure,verifyIdentity,verifyCart,assertNumericId,safeCode} from '../verifier.mjs';
 import {productLink} from '../product-links.mjs';
@@ -51,7 +54,7 @@ export async function handleSelectionRound(req,{taskSpace=globalThis.taskSpace,e
    if(!(await usable(p))){const rebuilt=key==='library'?task.page('p1'):await task.newPage();if(!rebuilt||typeof rebuilt.label!=='string'||!rebuilt.label||String(rebuilt.spaceId)!==space)throw failure('PAGE_SPACE_MISMATCH');pages[key]=rebuilt.label;p=rebuilt;if(key!=='library')createdThisRound.push(rebuilt.label);}
    return p;};
   const control=()=>{if(task.ownership!=='agent')throw failure('USER_OWNED_OR_INACTIVE');};
-  const waitRows=async p=>p.waitForSelector('tr[data-row-key]',{timeout:20000});
+  const waitRows=async p=>{await p.waitForSelector('tr[data-row-key]',{timeout:20000});try{await p.waitForFunction(()=>{const n=document.querySelectorAll('tr[data-row-key]').length,w=window;w.__wrSame=w.__wrLast===n?(w.__wrSame||0)+1:0;w.__wrLast=n;return w.__wrSame>=2||n>=30;},undefined,{timeout:8000,polling:250});}catch{}};
  // Wave16：选品库页于 2026-10-11 08:41-08:47 切换为「选品广场」卡片流（批8 run-875289bb 加车 waitRows 超时 →
  // SIDE_EFFECT_UNCERTAIN；零副作用）。readiness 改为有界等待二者的析取（旧表格行/新卡流模块），再把模式读回；
  // 二者皆不可观测时回退旧路径（旧路径自身的既有有界等待继续裁定，行为与切换前逐字一致）。
@@ -86,7 +89,7 @@ export async function handleSelectionRound(req,{taskSpace=globalThis.taskSpace,e
   const priceText=price=>{if(Number.isSafeInteger(price?.origin)&&price.origin>=0)return '\u00a5'+(price.origin/100).toFixed(2);if(digits(price?.integer))return '\u00a5'+price.integer+'.'+(digits(price?.decimal)?price.decimal:'00');return '';};
   const ratioText=cos=>{const r=cos?.cos?.cos_ratio;if(digits(r?.integer))return r.integer+(digits(r.decimal)?'.'+r.decimal:'')+'%';if(Number.isFinite(r?.origin))return String(r.origin)+'%';return typeof cos?.cos_ratio_text==='string'?cos.cos_ratio_text:'';};
   const salesText=m=>Number.isSafeInteger(m?.origin)&&m.origin>=0?String(m.origin).replace(/\B(?=(\d{3})+(?!\d))/g,','):'';
-  return items.map(it=>{const bm=it?.base_model??{},pi=bm.product_info??{};return {row_key:it?.product_id,product_id:it?.product_id,promotion_id:it?.promotion_id,title:pi.name,cell_texts:[null,priceText(bm.marketing_info?.price_desc?.price),ratioText(bm.promotion_info?.cos_info),null,null,salesText(pi.month_sale)],category:pi.category};});
+  return items.map(it=>{const bm=it?.base_model??{},pi=bm.product_info??{};return {row_key:it?.product_id,product_id:it?.product_id,promotion_id:it?.promotion_id,title:pi.name,cell_texts:[null,priceText(bm.marketing_info?.price_desc?.price),ratioText(bm.promotion_info?.cos_info),null,null,salesText(pi.month_sale)],category:pi.category,sale_axis:Array.isArray(pi.sale_axis)?pi.sale_axis.slice(0,31).map(p=>p&&typeof p==='object'?{x:typeof p.x==='string'?p.x:null,y:typeof p.y==='number'?p.y:null}:null):pi.sale_axis==null?null:false,month_sale:typeof pi.month_sale?.origin==='number'?pi.month_sale.origin:null};});
  };
   const writeDeadline=req.deadline_ms;
   const checkWrite=()=>{if(typeof writeDeadline!=='number'||!Number.isFinite(writeDeadline)||writeDeadline<=0)throw failure('RUN_DEADLINE_INVALID');if(Date.now()>=writeDeadline)throw failure('RUN_DEADLINE_EXPIRED');};
@@ -247,13 +250,17 @@ export async function handleSelectionRound(req,{taskSpace=globalThis.taskSpace,e
    verifyCart(c,observed.row);return observed.row;
   };
   if(req.operation==='discover'){
-   const p=await get('library');await p.cdp('Network.enable');await p.goto(req.contract.library.entry_url);const mode=await waitLibrary(p);control();let rows;
-   if(mode==='square'){const items=await waitMaterialList(p,'PCSquareFeed','',20000);if(!items||!items.length)throw failure('LIBRARY_NOT_READY');rows=squareRows(items);}
-   else{await waitRows(p);control();rows=await p.evaluate(extractRows,{kind:'library',limit:req.max_candidates});if(!rows.length)throw failure('LIBRARY_NOT_READY');}
+   const p=await get('library');await p.cdp('Network.enable');let mode,rows=[];
+   for(let attempt=0;attempt<2;attempt++){await p.goto(req.contract.library.entry_url);mode=await waitLibrary(p);control();
+    if(mode==='square'){const items=await waitMaterialList(p,'PCSquareFeed','',20000);if(!items||!items.length)throw failure('LIBRARY_NOT_READY');rows=squareRows(items);}
+    else{await waitRows(p);control();rows=await p.evaluate(extractRows,{kind:'library',limit:Math.max(req.max_candidates,30)});if(!rows.length)throw failure('LIBRARY_NOT_READY');}
+    let degraded=false;try{degraded=await p.evaluate(()=>/网络错误|加载失败|请重试/.test(document.body.innerText));}catch{}if(attempt===1||(rows.length>=5)||(rows.length>0&&!degraded))break;await p.waitForTimeout(2500);}
    // Wave18(A3)：两条路径同一排除谓词；rows→candidates 之前过滤，excluded_count=被排除行数（安全整数）。
    const kept=rows.filter(r=>!excludedRow(r));
    result={candidates:libraryCandidates(kept).slice(0,req.max_candidates),excluded_count:rows.length-kept.length,pages_observed:1,stop_reason:'ONLY_VERIFIED_FIRST_SCREEN'};
-  }else if(req.operation==='read_cart')result=await cartLookup();
+  }else if(req.operation==='prefilter_discover'){const p=await get('library'),data=await readPrefilter(p,req,control),rows=squareRows(data.items),kept=rows.filter(r=>!excludedRow(r));result={schema_version:1,group_index:req.prefilter_group,request:data.request,candidates:libraryCandidates(kept).slice(0,req.max_candidates)};}else if(req.operation==='creator_sample'){const p=await get('creator_detail');result=await readCreatorDetail(p,req,control);}
+  else if(req.operation==='selection_decision'){const p=await get('selection_detail');result=await readSelectionDetail(p,req,control);}
+  else if(req.operation==='read_cart')result=await cartLookup();
   else if(req.operation==='add_cart'){
    const c=verifyIdentity(req.candidate);framedCart=await makeFramedCart();const existing=await cartLookup();if(existing)result=existing;else{const p=ownedAdmissionPage;
    if(libraryMode==='square'){
@@ -285,17 +292,17 @@ export async function handleSelectionRound(req,{taskSpace=globalThis.taskSpace,e
    if(data.rows.length!==Math.min(total,context.page_size))throw failure('COMPASS_ROW_COUNT_MISMATCH');const seen=new Set();const videos=[];for(const row of data.rows){assertNumericId(row.aweme_id);if(JSON.stringify(row.context)!==JSON.stringify(context))throw failure('COMPASS_CONTEXT_MIXED');if(seen.has(row.aweme_id))throw failure('COMPASS_VIDEO_DUPLICATE');seen.add(row.aweme_id);const {context:_,extracted:__,...v}=row;videos.push({...v,commodity_id:c.commodity_id});}result={context,videos,extraction,total_text:data.total_text??null};}
   }else if(req.operation==='metadata'){
    assertNumericId(req.video.aweme_id);const p=await get('decision');const detailUrl=value=>{try{const u=new URL(value);return u.hostname==='www.douyin.com'&&u.pathname.includes('/aweme/detail/')&&u.searchParams.get('aweme_id')===req.video.aweme_id;}catch{return false;}};
-   await p.cdp('Network.enable');await p.goto('https://www.douyin.com/video/'+req.video.aweme_id);
-   const until=Date.now()+25000;let requestId=null,status=null,mimeType=null,finished=false;
+   await p.cdp('Network.enable');let metaAttempt=0,requestId=null,status=null,mimeType=null,finished=false,until=0;for(;;){metaAttempt++;await p.goto('https://www.douyin.com/video/'+req.video.aweme_id);
+   until=Date.now()+25000;requestId=null;status=null;mimeType=null;finished=false;
    while(!finished&&Date.now()<until){const events=await p.events();for(const e of Array.isArray(events)?events:[]){const x=e?.params;if(e?.method==='Network.requestWillBeSent'&&requestId===null&&detailUrl(x?.request?.url)&&typeof x?.requestId==='string'&&x.requestId)requestId=x.requestId;else if(e?.method==='Network.responseReceived'&&x?.requestId===requestId){status=x?.response?.status;mimeType=x?.response?.mimeType;}else if(e?.method==='Network.loadingFinished'&&x?.requestId===requestId)finished=true;}if(!finished&&Date.now()<until)await p.waitForTimeout(Math.min(100,until-Date.now()));}
-   control();if(requestId===null){const endpoint=await p.evaluate(({id})=>performance.getEntriesByType('resource').map(x=>x.name).find(value=>{try{const u=new URL(value);return u.hostname==='www.douyin.com'&&u.pathname.includes('/aweme/detail/')&&u.searchParams.get('aweme_id')===id;}catch{return false;}}),{id:req.video.aweme_id});if(!endpoint)throw failure('METADATA_ENDPOINT_NOT_OBSERVED');throw failure('METADATA_BODY_INVALID');}
-   if([401,403].includes(status))throw failure('METADATA_PERMISSION_DENIED');if(status!==200)throw failure('METADATA_HTTP_FAILED');if(mimeType!=='application/json')throw failure('METADATA_BODY_INVALID');
+   control();if(requestId===null){if(metaAttempt<3){await p.waitForTimeout(700);continue;}const endpoint=await p.evaluate(({id})=>performance.getEntriesByType('resource').map(x=>x.name).find(value=>{try{const u=new URL(value);return u.hostname==='www.douyin.com'&&u.pathname.includes('/aweme/detail/')&&u.searchParams.get('aweme_id')===id;}catch{return false;}}),{id:req.video.aweme_id});if(!endpoint)throw failure('METADATA_ENDPOINT_NOT_OBSERVED');throw failure('METADATA_BODY_INVALID');}
+   if([401,403].includes(status)){if(metaAttempt<3){await p.waitForTimeout(800);continue;}throw failure('METADATA_PERMISSION_DENIED');}if(status!==200){if(metaAttempt<3){await p.waitForTimeout(800);continue;}throw failure('METADATA_HTTP_FAILED');}if(mimeType!=='application/json'){if(metaAttempt<3){await p.waitForTimeout(500);continue;}throw failure('METADATA_BODY_INVALID');}break;}
    const response=await p.cdp('Network.getResponseBody',{requestId});let raw=null;try{const text=typeof response?.body==='string'?(response.base64Encoded?Buffer.from(response.body,'base64').toString('utf8'):response.body):null;if(text!==null)raw=JSON.parse(text);}catch{}
    if(!raw||typeof raw!=='object')throw failure('METADATA_BODY_INVALID');const a=raw.aweme_detail;if(!a){result={error:'METADATA_EMPTY',filter_reason:raw.filter_reason??raw.status_msg??'EMPTY'};}else{const v=a.video,bitrates=(v?.bit_rate??[]).slice().sort((a,b)=>(b.bit_rate??0)-(a.bit_rate??0));result={aweme_id:a.aweme_id,desc:a.desc,status_self_see:a.status?.self_see??a.status?.status_self_see??false,filter_reason:raw.filter_reason??null,error:raw.status_code?String(raw.status_code):null,duration_ms:v?.duration??a.duration,uri:v?.play_addr?.uri,play:bitrates[0]?.play_addr?.url_list??v?.play_addr?.url_list??[],author:a.author?.nickname??null};}
   }else if(req.operation==='finish'){control();await task.finish({keep:[]});result={finished:true};}
   else if(req.operation==='handoff'){control();await task.handOff();result={handed_off:true};}
   else throw failure('ACTION_NOT_ALLOWED');
-  await noLinks(req.output_file);if(postEffectCheck)await postEffectCheck();await closeAdmission();await fs.writeFile(req.output_file,JSON.stringify({space_id:space,pages,result}),{flag:'wx',mode:0o600});emit({type:'phase4_result',space_id:space,operation:req.operation,status:'ok'});
+  await noLinks(req.output_file);if(['selection_decision','creator_sample','prefilter_discover'].includes(req.operation)){control();if(Date.now()>=req.deadline_ms)throw failure('RUN_DEADLINE_EXPIRED');}if(postEffectCheck)await postEffectCheck();await closeAdmission();await fs.writeFile(req.output_file,JSON.stringify({space_id:space,pages,result}),{flag:'wx',mode:0o600});if(['selection_decision','creator_sample','prefilter_discover'].includes(req.operation)){control();if(Date.now()>=req.deadline_ms)throw failure('RUN_DEADLINE_EXPIRED');}emit({type:'phase4_result',space_id:space,operation:req.operation,status:'ok'});
  }catch(e){roundError=e;emit({type:'phase4_result',...(space?{space_id:space}:{}),operation:req.operation,status:'error',error_code:safeCode(e,'BROWSER_BLOCKED')});throw failure(safeCode(e,'BROWSER_BLOCKED'));}
  finally{try{await closeAdmission();}catch(e){if(!roundError)throw e;}if(roundError&&task)for(const label of createdThisRound){try{await task.page(label)?.close();}catch{}}}
 }

@@ -1,0 +1,21 @@
+import {failure,verifyIdentity} from '../verifier.mjs';
+import {productLink} from '../product-links.mjs';
+import {projectDecisionResponse,validateDecisionConfig} from '../decision-signals.mjs';
+// Only native navigation/clicks produce requests; no fetch, replay or credentials.
+export async function readSelectionDetail(p,req,control){
+ const c=verifyIdentity(req.candidate),cfg=validateDecisionConfig(req.decision_config),until=Math.min(req.deadline_ms,Date.now()+25000);
+ const check=()=>{control();if(!Number.isFinite(req.deadline_ms))throw failure('RUN_DEADLINE_INVALID');if(Date.now()>=req.deadline_ms)throw failure('RUN_DEADLINE_EXPIRED');if(Date.now()>=until)throw failure('READ_TIMEOUT');};
+ const step=async fn=>{check();const v=await fn();check();return v;};
+ await step(()=>p.cdp('Network.enable'));await step(()=>p.events());await step(()=>p.goto(productLink(c)));
+ const header=({product_id,title})=>{const hits=[];for(const root of document.querySelectorAll('[class*="index_module__basicInfoContainer___"]'))for(const id of root.querySelectorAll('span.param-style')){if(id.textContent?.trim()!==product_id||!id.getClientRects().length)continue;const h=id.closest('[class*="index_module__titleContainer___"]');if(h&&[...h.querySelectorAll('[class*="index_module__title___"]')].filter(n=>n.textContent?.trim()===title&&n.getClientRects().length).length===1)hits.push(h);}return hits.length===1;};
+ await step(()=>p.waitForFunction(header,{product_id:c.product_id,title:c.title},{timeout:Math.max(1,until-Date.now())}));
+ if(cfg.window_days===7){await step(()=>p.events());const point=await step(()=>p.evaluate(()=>{const nodes=[...document.querySelectorAll('button,[role="tab"],label,span,div')].filter(x=>x.textContent?.trim()==='近7天'&&x.getClientRects().length&&![...x.children].some(y=>y.textContent?.trim()==='近7天'));if(nodes.length!==1)return null;const r=nodes[0].getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};}));if(!point)throw failure('SELECTION_WINDOW_CONTROL_UNVERIFIED');for(const type of ['mousePressed','mouseReleased'])await step(()=>p.cdp('Input.dispatchMouseEvent',{type,...point,button:'left',clickCount:1}));}
+ const seen=new Map();while(true){const events=await step(()=>p.events());for(const e of Array.isArray(events)?events:[]){const x=e?.params;if(e.method==='Network.requestWillBeSent'){let u,b;try{u=new URL(x.request.url);b=JSON.parse(x.request.postData);}catch{continue;}if(u.origin!=='https://buyin.jinritemai.com'||u.pathname!=='/pc/selection/decision/pack_detail'||x.request.method!=='POST'||b.biz_id!==c.promotion_id||b.biz_id_type!==2)continue;const match=cfg.window_days===30?b.data_module==='pc-non-core':b.data_module==='dynamic'&&b.dynamic_params?.param_type===9&&b.dynamic_params?.promotion_data_params?.time_range==='7'&&b.dynamic_params?.content_data_params?.time_range==='7';if(match)seen.set(x.requestId,{finished:false,status:null,failed:false});}
+ else if(e.method==='Network.responseReceived'&&seen.has(x?.requestId)){if([401,403].includes(x.response?.status))throw failure('HTTP_'+x.response.status+'_PERMISSION_DENIED');seen.get(x.requestId).status=x.response?.status;}
+ else if(e.method==='Network.loadingFinished'&&seen.has(x?.requestId))seen.get(x.requestId).finished=true;
+ else if(e.method==='Network.loadingFailed'&&seen.has(x?.requestId))seen.get(x.requestId).failed=true;}
+ if(seen.size>1)throw failure('SELECTION_RESPONSE_AMBIGUOUS');
+ for(const [requestId,r]of seen)if(r.finished&&!r.failed){if(r.status!==200)throw failure('SELECTION_RESPONSE_INVALID');const raw=await step(()=>p.cdp('Network.getResponseBody',{requestId}));let body;try{body=JSON.parse(raw.base64Encoded?Buffer.from(raw.body,'base64').toString('utf8'):raw.body);}catch{throw failure('SELECTION_RESPONSE_INVALID');}if(body?.code!==0||body.data?.promotion_id!==c.promotion_id||body.data?.product_id!==c.product_id||body.data?.model?.promotion_data?.code!==0)throw failure('SELECTION_IDENTITY_OR_CODE_INVALID');if(!await step(()=>p.evaluate(header,{product_id:c.product_id,title:c.title})))throw failure('SELECTION_IDENTITY_OR_CODE_INVALID');return projectDecisionResponse(body,{...c,...cfg});}
+ await step(()=>p.waitForTimeout(Math.min(100,until-Date.now())));
+ }
+}

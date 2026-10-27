@@ -14,7 +14,7 @@ export async function runSelection({projectRoot=process.cwd(),action='start',run
   const manager=createTaskManager({projectRoot,coreOnly}); let activeId; const stop=()=>activeId?manager.pause(activeId):Promise.resolve();
   process.once('SIGINT',stop);process.once('SIGTERM',stop);
   try {
-    if(action==='status'){const tasks=manager.list().map(publicTask);output({tasks});return {tasks};}
+    if(action==='status'){const tasks=manager.listPublic();output({tasks});return {tasks};}
     if(action==='pause'){const task=await manager.pause(runId);output({task});return {task};}
     let started;
     if(action==='resume')started=await manager.resume(runId,{adapter,testMode});

@@ -27,7 +27,7 @@ test('保存目录兼容旧配置，默认不变', () => {
   assert.equal(validatePolicy(old).valid, true);
 });
 test('本机与 NAS 中文路径逐字保留，不擅自标准化', () => {
-  for (const root of ['/Users/EXAMPLE_USER/Movies/选品 视频', '/Volumes/EXAMPLE_SHARED/自选素材/']) {
+  for (const root of ['/Users/example/Movies/选品 视频', '/Volumes/选品素材/自选素材/']) {
     assert.equal(validateVideoRoot(root), root);
     const draft = {...policyToDraft(defaultPolicy()), videoSaveRoot:root};
     const policy = draftToPolicy(draft);
@@ -65,7 +65,7 @@ test('非法目录不影响磁盘配置', async t => {
   assert.deepEqual(await fs.readFile(file), bytes);
 });
 test('选择文件夹仅改变草稿，取消不改配置；无授权不弹选择器', async t => {
-  let calls = 0; let picked = '/Users/EXAMPLE_USER/Movies/中文 视频';
+  let calls = 0; let picked = '/Users/example/Movies/中文 视频';
   const f = await fixture(t, async () => {calls++; return picked;}); const before = await f.get();
   assert.equal((await f.post('/api/choose-video-directory', {}, false)).status, 403); assert.equal(calls, 0);
   assert.equal((await f.post('/api/choose-video-directory', {path:'/other'})).status, 422); assert.equal(calls, 0);

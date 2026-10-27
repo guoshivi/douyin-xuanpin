@@ -5,8 +5,9 @@ import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { defaultPolicy, policyToDraft, draftToPolicy, validatePolicy } from './settings-model.mjs';
+import { setCategoryCatalog } from './policy.mjs';
 import { getVideoRoot, validateVideoRoot, chooseVideoDirectory } from './storage-settings.mjs';
-import { createTaskManager, publicTask } from './task-manager.mjs';
+import { createTaskManager } from './task-manager.mjs';
 import { safeCode, failure } from './verifier.mjs';
 import { resolveLanInterface, validateSettingsPort, checkSettingsNetwork, LanAccessError } from './lan-access.mjs';
 
@@ -37,7 +38,9 @@ async function ensurePolicy(root) {
   return file;
 }
 
-export async function createSettingsServer({projectRoot=process.cwd(), root: injectedRoot, port=0, lan=false, lanAddress, coreOnly=false, directoryPicker=chooseVideoDirectory, taskAdapter, testMode=false, taskDbPath}={}) {
+export async function createSettingsServer({
+projectRoot=process.cwd(), root: injectedRoot, port=0, lan=false, lanAddress, coreOnly=false, directoryPicker=chooseVideoDirectory, taskAdapter, testMode=false, taskDbPath}={}) {
+  setCategoryCatalog(await readCatalog(projectRoot));
   if(typeof coreOnly!=='boolean')throw failure('TASK_OPTION_INVALID');
   validateSettingsPort(port);
   if(typeof lan!=='boolean'||(!lan&&lanAddress!==undefined))throw new LanAccessError('SETTINGS_OPTION_INVALID','局域网地址必须通过明确的 LAN 模式启用。');
@@ -73,7 +76,7 @@ export async function createSettingsServer({projectRoot=process.cwd(), root: inj
       if (req.method==='GET' && url.pathname==='/api/settings') {
         const {p,r}=await current(); const cats=await readCatalog(root); return json(res,200,{revision:r,policy:p,draft:policyToDraft(p),categories:cats,capabilities:{execution_mode:coreOnly?'core_only':'integrated',feishu_sync_enabled:!coreOnly},storage_layout:{root:getVideoRoot(p),example:'日期 / 商品编号 / 视频'}});
       }
-      if(req.method==='GET'&&url.pathname==='/api/tasks'){return json(res,200,{tasks:manager().list().map(publicTask)});}
+      if(req.method==='GET'&&url.pathname==='/api/tasks'){return json(res,200,{tasks:manager().listPublic()});}
       if (req.method==='POST' && ['/api/settings','/api/close','/api/choose-video-directory','/api/tasks/start','/api/tasks/pause','/api/tasks/resume','/api/tasks/cancel','/api/open-folder'].includes(url.pathname)) {
         if (req.headers.origin !== `http://${host}`) return safeError(res,403,'BAD_ORIGIN');
         if (req.headers['content-type']?.split(';')[0].trim() !== 'application/json') return safeError(res,403,'BAD_CONTENT_TYPE');
